@@ -159,27 +159,3 @@ $peer = new JsonRpcPeer($input, $output, new PsrTrafficLogger($logger));
 Install `psr/log` to use this optional adapter. JSON-RPC payloads may contain
 secrets, so configure protocol-specific redaction in your logger before
 persisting them.
-
-## Testing
-
-The peer takes any amphp streams, so it drives cleanly against in-memory byte
-streams with no real stdio. Feed scripted client messages on the readable side
-and assert the emitted responses and notifications on the writable side.
-
-## Components
-
-| Class | Responsibility |
-| --- | --- |
-| `JsonRpcPeer` | Reads and writes line-delimited JSON-RPC messages over amphp streams. |
-| `JsonRpcDispatcher` | Routes inbound methods to request and notification handlers. |
-| `RequestResponder` | Resolves or rejects a single inbound request, now or later. |
-| `JsonRpcMessage` | A validated inbound request or notification. |
-| `JsonRpcError` | The reserved JSON-RPC 2.0 error codes. |
-| `Exception\ExceptionInterface` | Marker interface implemented by all package exceptions. |
-| `Exception\JsonRpcException` | Represents a JSON-RPC error returned to or by a peer. |
-| `TrafficLoggerInterface` | Optional hook to record raw traffic. |
-| `PsrTrafficLogger` | Forwards raw traffic to a PSR-3 logger. |
-
-## License
-
-Released under the [MIT license](LICENSE).
