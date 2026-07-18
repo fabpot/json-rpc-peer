@@ -137,6 +137,14 @@ so a single bad line never tears down the connection.
 $peer->listen();
 ```
 
+## Spec conformance
+
+The peer implements the JSON-RPC 2.0 spec with one deliberate exception: batch
+calls are not supported. The stdio protocols this library targets never batch
+(the Model Context Protocol even removed JSON-RPC batching), so an inbound
+JSON array is answered with a single Invalid Request error instead of a batch
+of responses, and the peer never emits batches.
+
 ## Traffic logging
 
 Pass a `TrafficLoggerInterface` to the peer to record raw inbound and outbound
