@@ -130,6 +130,17 @@ final class JsonRpcPeerTest extends TestCase
         ], $output->messages());
     }
 
+    public function testResponseWithFloatIdResolvesTheMatchingIntRequest(): void
+    {
+        $input = new ReadableBuffer('{"jsonrpc":"2.0","id":1.0,"result":"ok"}');
+        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $response = $peer->request('ping');
+
+        $peer->listen();
+
+        $this->assertSame('ok', $response->await());
+    }
+
     public function testRequestOnClosedOutputThrowsConnectionClosedException(): void
     {
         $output = new CapturingStream();

@@ -266,6 +266,10 @@ final class JsonRpcPeer
 
     private function requestKey(int|float|string $id): string
     {
+        if (\is_float($id) && $id === floor($id) && $id >= \PHP_INT_MIN && $id <= \PHP_INT_MAX) {
+            $id = (int) $id;
+        }
+
         return get_debug_type($id) . ':' . $id;
     }
 
