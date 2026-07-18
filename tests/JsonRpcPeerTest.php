@@ -56,6 +56,7 @@ final class JsonRpcPeerTest extends TestCase
         yield 'missing method' => ['{"jsonrpc":"2.0","id":2,"params":{}}', 2];
         yield 'non-string method' => ['{"jsonrpc":"2.0","id":3,"method":42}', 3];
         yield 'scalar params' => ['{"jsonrpc":"2.0","id":4,"method":"ping","params":42}', 4];
+        yield 'null params' => ['{"jsonrpc":"2.0","id":4,"method":"ping","params":null}', 4];
         yield 'invalid id' => ['{"jsonrpc":"2.0","id":{},"method":"ping"}', null];
         yield 'batch' => ['[]', null];
     }

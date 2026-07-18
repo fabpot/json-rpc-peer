@@ -43,9 +43,12 @@ final class JsonRpcMessage
             throw new InvalidArgumentException('The method member must be a string.');
         }
 
-        $params = $data['params'] ?? [];
-        if (!\is_array($params)) {
-            throw new InvalidArgumentException('The params member must be an array or object.');
+        $params = [];
+        if (\array_key_exists('params', $data)) {
+            if (!\is_array($data['params'])) {
+                throw new InvalidArgumentException('The params member must be an array or object.');
+            }
+            $params = $data['params'];
         }
 
         $hasId = \array_key_exists('id', $data);
