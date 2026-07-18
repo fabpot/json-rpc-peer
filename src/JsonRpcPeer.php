@@ -116,13 +116,17 @@ final class JsonRpcPeer
         $deferred = new DeferredFuture();
         $this->pendingRequests[$this->requestKey($id)] = $deferred;
 
+        $payload = [
+            'jsonrpc' => '2.0',
+            'id' => $id,
+            'method' => $method,
+        ];
+        if ($params) {
+            $payload['params'] = $params;
+        }
+
         try {
-            $this->send([
-                'jsonrpc' => '2.0',
-                'id' => $id,
-                'method' => $method,
-                'params' => $params,
-            ]);
+            $this->send($payload);
         } catch (\Throwable $e) {
             unset($this->pendingRequests[$this->requestKey($id)]);
             throw $e;
@@ -162,11 +166,15 @@ final class JsonRpcPeer
      */
     public function notify(string $method, array $params = []): void
     {
-        $this->send([
+        $payload = [
             'jsonrpc' => '2.0',
             'method' => $method,
-            'params' => $params,
-        ]);
+        ];
+        if ($params) {
+            $payload['params'] = $params;
+        }
+
+        $this->send($payload);
     }
 
     /**

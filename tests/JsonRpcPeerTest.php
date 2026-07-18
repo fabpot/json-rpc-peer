@@ -102,10 +102,12 @@ final class JsonRpcPeerTest extends TestCase
 
         $peer->respond(7, ['ok' => true]);
         $peer->notify('session/update', ['sessionId' => 's1']);
+        $peer->notify('shutdown');
 
         $this->assertSame([
             ['jsonrpc' => '2.0', 'id' => 7, 'result' => ['ok' => true]],
             ['jsonrpc' => '2.0', 'method' => 'session/update', 'params' => ['sessionId' => 's1']],
+            ['jsonrpc' => '2.0', 'method' => 'shutdown'],
         ], $output->messages());
     }
 
@@ -126,7 +128,7 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame('second', $second->await());
         $this->assertSame([
             ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'first', 'params' => ['value' => 1]],
-            ['jsonrpc' => '2.0', 'id' => 2, 'method' => 'second', 'params' => []],
+            ['jsonrpc' => '2.0', 'id' => 2, 'method' => 'second'],
         ], $output->messages());
     }
 
