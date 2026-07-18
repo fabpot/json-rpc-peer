@@ -11,7 +11,9 @@
 
 namespace Fabpot\JsonRpc;
 
+use Amp\ByteStream\ClosedException;
 use Amp\ByteStream\ReadableStream;
+use Amp\ByteStream\StreamException;
 use Amp\ByteStream\WritableStream;
 use Amp\DeferredFuture;
 use Amp\Future;
@@ -19,6 +21,7 @@ use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\Exception\RuntimeException;
 
 use function Amp\ByteStream\splitLines;
 
@@ -171,9 +174,21 @@ final class JsonRpcPeer
      */
     private function send(array $payload): void
     {
-        $line = json_encode($payload, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);
+        try {
+            $line = json_encode($payload, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);
+        } catch (\JsonException $e) {
+            throw new InvalidArgumentException('The JSON-RPC payload cannot be encoded to JSON.', 0, $e);
+        }
+
         $this->trafficLogger?->logOutbound($line);
-        $this->output->write($line . "\n");
+
+        try {
+            $this->output->write($line . "\n");
+        } catch (ClosedException $e) {
+            throw new ConnectionClosedException('The JSON-RPC connection is closed.', 0, $e);
+        } catch (StreamException $e) {
+            throw new RuntimeException('Failed to write to the JSON-RPC connection.', 0, $e);
+        }
     }
 
     /**

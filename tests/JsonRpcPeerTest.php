@@ -130,6 +130,16 @@ final class JsonRpcPeerTest extends TestCase
         ], $output->messages());
     }
 
+    public function testRequestOnClosedOutputThrowsConnectionClosedException(): void
+    {
+        $output = new CapturingStream();
+        $output->close();
+        $peer = new JsonRpcPeer(new ReadableBuffer(''), $output);
+
+        $this->expectException(ConnectionClosedException::class);
+        $peer->request('ping');
+    }
+
     public function testOutboundRequestFailsWithRemoteError(): void
     {
         $input = new ReadableBuffer('{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Bad params","data":{"field":"value"}}}');

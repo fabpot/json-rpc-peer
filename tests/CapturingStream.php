@@ -11,6 +11,7 @@
 
 namespace Fabpot\JsonRpc\Tests;
 
+use Amp\ByteStream\ClosedException;
 use Amp\ByteStream\WritableStream;
 
 final class CapturingStream implements WritableStream
@@ -21,7 +22,7 @@ final class CapturingStream implements WritableStream
     public function write(string $bytes): void
     {
         if ($this->closed) {
-            throw new \RuntimeException('The stream is closed.');
+            throw new ClosedException('The stream is closed.');
         }
 
         $this->contents .= $bytes;
