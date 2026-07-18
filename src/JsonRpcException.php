@@ -1,7 +1,7 @@
 <?php
 
 /*
- * This file is part of the Symfony\Component package.
+ * This file is part of the fabpot/json-rpc-peer package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
@@ -9,7 +9,7 @@
  * file that was distributed with this source code.
  */
 
-namespace Symfony\Component\Agent\Acp\JsonRpc;
+namespace Fabpot\JsonRpc;
 
 /**
  * Thrown by a request handler to produce a JSON-RPC error response.

@@ -41,6 +41,8 @@ composer require fabpot/json-rpc-peer
 
 ```php
 use Amp\ByteStream;
+use Fabpot\JsonRpc\JsonRpcDispatcher;
+use Fabpot\JsonRpc\JsonRpcPeer;
 
 $peer = new JsonRpcPeer(
     ByteStream\getStdin(),
@@ -103,9 +105,19 @@ $dispatcher->onNotification('cancel', function () use (&$active): void {
 A responder settles at most once: a late `resolve()`/`reject()` after a cancel
 is silently ignored.
 
-### Emitting notifications
+### Emitting requests and notifications
 
-The peer can push notifications to the other side at any time:
+Outbound requests return an Amp `Future`. Responses are matched by ID, so they
+can arrive in any order. Remote JSON-RPC errors throw a `JsonRpcException` when
+the future is awaited. The listener must be running in another coroutine while
+a request is pending.
+
+```php
+$listener = \Amp\async($peer->listen(...));
+$result = $peer->request('workspace/status', ['workspace' => '/project'])->await();
+```
+
+The peer can also push notifications to the other side at any time:
 
 ```php
 $peer->notify('progress', ['percent' => 42]);
@@ -144,8 +156,7 @@ and assert the emitted responses and notifications on the writable side.
 | `JsonRpcPeer` | Reads and writes line-delimited JSON-RPC messages over amphp streams. |
 | `JsonRpcDispatcher` | Routes inbound methods to request and notification handlers. |
 | `RequestResponder` | Resolves or rejects a single inbound request, now or later. |
-| `JsonRpcMessage` | A parsed inbound request or notification. |
-| `JsonRpcResponse` | Builders for success and error response payloads. |
+| `JsonRpcMessage` | A validated inbound request or notification. |
 | `JsonRpcError` | The reserved JSON-RPC 2.0 error codes. |
 | `JsonRpcException` | Thrown by a handler to produce an error response. |
 | `TrafficLoggerInterface` | Optional hook to record raw traffic. |

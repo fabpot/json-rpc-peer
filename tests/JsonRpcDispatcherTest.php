@@ -1,7 +1,7 @@
 <?php
 
 /*
- * This file is part of the Symfony\Component package.
+ * This file is part of the fabpot/json-rpc-peer package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
@@ -9,15 +9,15 @@
  * file that was distributed with this source code.
  */
 
-namespace Symfony\Component\Agent\Tests\Acp;
+namespace Fabpot\JsonRpc\Tests;
 
 use Amp\ByteStream\ReadableBuffer;
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\Agent\Acp\JsonRpc\JsonRpcDispatcher;
-use Symfony\Component\Agent\Acp\JsonRpc\JsonRpcError;
-use Symfony\Component\Agent\Acp\JsonRpc\JsonRpcException;
-use Symfony\Component\Agent\Acp\JsonRpc\JsonRpcPeer;
-use Symfony\Component\Agent\Acp\JsonRpc\RequestResponder;
+use Fabpot\JsonRpc\JsonRpcDispatcher;
+use Fabpot\JsonRpc\JsonRpcError;
+use Fabpot\JsonRpc\JsonRpcException;
+use Fabpot\JsonRpc\JsonRpcPeer;
+use Fabpot\JsonRpc\RequestResponder;
 
 final class JsonRpcDispatcherTest extends TestCase
 {
@@ -46,8 +46,44 @@ final class JsonRpcDispatcherTest extends TestCase
             },
         );
 
-        $this->assertSame(JsonRpcError::INTERNAL_ERROR, $output[0]['error']['code']);
-        $this->assertSame('nope', $output[0]['error']['message']);
+        $this->assertSame([
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'nope'],
+        ], $output[0]);
+    }
+
+    public function testUnexpectedExceptionBecomesInternalErrorResponse(): void
+    {
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","id":5,"method":"boom","params":{}}',
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('boom', static function (): void {
+                    throw new \RuntimeException('sensitive details');
+                });
+            },
+        );
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error'],
+        ]], $output);
+    }
+
+    public function testResponderSettlesOnlyOnce(): void
+    {
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","id":5,"method":"settle","params":{}}',
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('settle', static function (array $params, RequestResponder $responder): void {
+                    $responder->resolve('first');
+                    $responder->reject(JsonRpcError::INTERNAL_ERROR, 'second');
+                });
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 5, 'result' => 'first']], $output);
     }
 
     public function testNotificationHandlerProducesNoResponse(): void
@@ -73,7 +109,11 @@ final class JsonRpcDispatcherTest extends TestCase
             static function (): void {},
         );
 
-        $this->assertSame(JsonRpcError::METHOD_NOT_FOUND, $output[0]['error']['code']);
+        $this->assertSame([
+            'jsonrpc' => '2.0',
+            'id' => 3,
+            'error' => ['code' => JsonRpcError::METHOD_NOT_FOUND, 'message' => 'Method not found: missing'],
+        ], $output[0]);
     }
 
     /**
@@ -84,7 +124,7 @@ final class JsonRpcDispatcherTest extends TestCase
     private function drive(string $line, callable $configure): array
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer($line."\n"), $output);
+        $peer = new JsonRpcPeer(new ReadableBuffer($line . "\n"), $output);
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();

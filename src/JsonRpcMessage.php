@@ -1,7 +1,7 @@
 <?php
 
 /*
- * This file is part of the Symfony\Component package.
+ * This file is part of the fabpot/json-rpc-peer package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
@@ -9,49 +9,73 @@
  * file that was distributed with this source code.
  */
 
-namespace Symfony\Component\Agent\Acp\JsonRpc;
+namespace Fabpot\JsonRpc;
 
 /**
- * A parsed inbound JSON-RPC 2.0 message.
- *
- * A message with a method is a request (when it also has an id) or a
- * notification (when it does not). Inbound responses are not modeled here.
+ * A validated inbound JSON-RPC 2.0 request or notification.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
 final class JsonRpcMessage
 {
     /**
-     * @param array<string, mixed> $params
+     * @param array<array-key, mixed> $params
      */
-    public function __construct(
-        public readonly int|string|null $id,
-        public readonly ?string $method,
-        public readonly array $params,
-    ) {
-    }
+    private function __construct(
+        private readonly int|float|string|null $id,
+        private readonly bool $hasId,
+        private readonly string $method,
+        private readonly array $params,
+    ) {}
 
     /**
      * @param array<string, mixed> $data
      */
     public static function fromArray(array $data): self
     {
-        $id = $data['id'] ?? null;
-        $method = isset($data['method']) && \is_string($data['method']) ? $data['method'] : null;
-        $params = $data['params'] ?? [];
+        if ('2.0' !== ($data['jsonrpc'] ?? null)) {
+            throw new \InvalidArgumentException('The jsonrpc member must be "2.0".');
+        }
 
-        return new self(
-            \is_int($id) || \is_string($id) ? $id : null,
-            $method,
-            \is_array($params) ? $params : [],
-        );
+        if (!isset($data['method']) || !\is_string($data['method'])) {
+            throw new \InvalidArgumentException('The method member must be a string.');
+        }
+
+        $params = $data['params'] ?? [];
+        if (!\is_array($params)) {
+            throw new \InvalidArgumentException('The params member must be an array or object.');
+        }
+
+        $hasId = \array_key_exists('id', $data);
+        $id = $data['id'] ?? null;
+        if ($hasId && !\is_int($id) && !\is_float($id) && !\is_string($id) && null !== $id) {
+            throw new \InvalidArgumentException('The id member must be a number, string, or null.');
+        }
+        /** @var int|float|string|null $id */
+
+        return new self($id, $hasId, $data['method'], $params);
+    }
+
+    public function getId(): int|float|string|null
+    {
+        return $this->id;
+    }
+
+    public function getMethod(): string
+    {
+        return $this->method;
     }
 
     /**
-     * A request expects a response; a notification does not.
+     * @return array<array-key, mixed>
      */
+    public function getParams(): array
+    {
+        return $this->params;
+    }
+
     public function isNotification(): bool
     {
-        return null === $this->id;
+        return !$this->hasId;
     }
 }

@@ -1,7 +1,7 @@
 <?php
 
 /*
- * This file is part of the Symfony\Component package.
+ * This file is part of the fabpot/json-rpc-peer package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
@@ -9,14 +9,10 @@
  * file that was distributed with this source code.
  */
 
-namespace Symfony\Component\Agent\Acp\JsonRpc;
+namespace Fabpot\JsonRpc;
 
 /**
  * Resolves a single inbound request, now or later.
- *
- * Synchronous handlers resolve inline; a long-running handler hands the
- * responder to its coroutine and resolves it once the work ends, while the
- * dispatcher keeps reading inbound messages. A responder resolves at most once.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
@@ -26,17 +22,17 @@ final class RequestResponder
 
     public function __construct(
         private readonly JsonRpcPeer $peer,
-        private readonly int|string $id,
-    ) {
-    }
+        private readonly int|float|string|null $id,
+    ) {}
 
     public function resolve(mixed $result): void
     {
         if ($this->settled) {
             return;
         }
-        $this->settled = true;
+
         $this->peer->respond($this->id, $result);
+        $this->settled = true;
     }
 
     public function reject(int $code, string $message, mixed $data = null): void
@@ -44,8 +40,9 @@ final class RequestResponder
         if ($this->settled) {
             return;
         }
-        $this->settled = true;
+
         $this->peer->respondError($this->id, $code, $message, $data);
+        $this->settled = true;
     }
 
     public function isSettled(): bool
