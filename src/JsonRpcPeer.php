@@ -15,6 +15,10 @@ use Amp\ByteStream\ReadableStream;
 use Amp\ByteStream\WritableStream;
 use Amp\DeferredFuture;
 use Amp\Future;
+use Fabpot\JsonRpc\Exception\ConnectionClosedException;
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
+use Fabpot\JsonRpc\Exception\InvalidResponseException;
+use Fabpot\JsonRpc\Exception\JsonRpcException;
 
 use function Amp\ByteStream\splitLines;
 
@@ -78,7 +82,7 @@ final class JsonRpcPeer
 
                 try {
                     $message = JsonRpcMessage::fromArray($decoded);
-                } catch (\InvalidArgumentException) {
+                } catch (InvalidArgumentException) {
                     $id = $this->validResponseId($decoded['id'] ?? null);
                     $this->respondError($id, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
                     continue;
@@ -91,7 +95,7 @@ final class JsonRpcPeer
         } finally {
             foreach ($this->pendingRequests as $deferred) {
                 if (!$deferred->isComplete()) {
-                    $deferred->error(new \RuntimeException('The JSON-RPC connection closed before a response was received.'));
+                    $deferred->error(new ConnectionClosedException('The JSON-RPC connection closed before a response was received.'));
                 }
             }
             $this->pendingRequests = [];
@@ -242,7 +246,7 @@ final class JsonRpcPeer
     private function failInvalidResponse(string $key, DeferredFuture $deferred): void
     {
         unset($this->pendingRequests[$key]);
-        $deferred->error(new \UnexpectedValueException('Received an invalid JSON-RPC response.'));
+        $deferred->error(new InvalidResponseException('Received an invalid JSON-RPC response.'));
     }
 
     private function requestKey(int|float|string $id): string

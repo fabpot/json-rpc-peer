@@ -72,6 +72,10 @@ Throwing a `JsonRpcException` from a request handler is turned into a JSON-RPC
 error response:
 
 ```php
+use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\JsonRpcError;
+use Fabpot\JsonRpc\RequestResponder;
+
 $dispatcher->onRequest('divide', function (array $params, RequestResponder $responder): void {
     if (0 === $params['by']) {
         throw new JsonRpcException(JsonRpcError::INVALID_PARAMS, 'Cannot divide by zero.');
@@ -136,12 +140,17 @@ $peer->listen();
 ## Traffic logging
 
 Pass a `TrafficLoggerInterface` to the peer to record raw inbound and outbound
-lines, for example to debug a broken interaction after the fact.
-Implementations are responsible for redacting secrets before persisting a line.
+lines. `PsrTrafficLogger` forwards them to a PSR-3 logger at the `debug` level:
 
 ```php
-$peer = new JsonRpcPeer($input, $output, $trafficLogger);
+use Fabpot\JsonRpc\PsrTrafficLogger;
+
+$peer = new JsonRpcPeer($input, $output, new PsrTrafficLogger($logger));
 ```
+
+Install `psr/log` to use this optional adapter. JSON-RPC payloads may contain
+secrets, so configure protocol-specific redaction in your logger before
+persisting them.
 
 ## Testing
 
@@ -158,8 +167,10 @@ and assert the emitted responses and notifications on the writable side.
 | `RequestResponder` | Resolves or rejects a single inbound request, now or later. |
 | `JsonRpcMessage` | A validated inbound request or notification. |
 | `JsonRpcError` | The reserved JSON-RPC 2.0 error codes. |
-| `JsonRpcException` | Thrown by a handler to produce an error response. |
+| `Exception\ExceptionInterface` | Marker interface implemented by all package exceptions. |
+| `Exception\JsonRpcException` | Represents a JSON-RPC error returned to or by a peer. |
 | `TrafficLoggerInterface` | Optional hook to record raw traffic. |
+| `PsrTrafficLogger` | Forwards raw traffic to a PSR-3 logger. |
 
 ## License
 

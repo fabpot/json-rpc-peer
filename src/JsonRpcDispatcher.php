@@ -11,6 +11,8 @@
 
 namespace Fabpot\JsonRpc;
 
+use Fabpot\JsonRpc\Exception\JsonRpcException;
+
 /**
  * Maps JSON-RPC method names to request and notification handlers.
  *

@@ -9,14 +9,14 @@
  * file that was distributed with this source code.
  */
 
-namespace Fabpot\JsonRpc;
+namespace Fabpot\JsonRpc\Exception;
 
 /**
- * Thrown by a request handler to produce a JSON-RPC error response.
+ * Represents a JSON-RPC error returned by a request handler or remote peer.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-final class JsonRpcException extends \RuntimeException
+final class JsonRpcException extends RuntimeException
 {
     public function __construct(
         int $code,

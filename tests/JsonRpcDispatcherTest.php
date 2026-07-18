@@ -15,7 +15,7 @@ use Amp\ByteStream\ReadableBuffer;
 use PHPUnit\Framework\TestCase;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
-use Fabpot\JsonRpc\JsonRpcException;
+use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcPeer;
 use Fabpot\JsonRpc\RequestResponder;
 

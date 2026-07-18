@@ -11,6 +11,8 @@
 
 namespace Fabpot\JsonRpc;
 
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
+
 /**
  * A validated inbound JSON-RPC 2.0 request or notification.
  *
@@ -34,22 +36,22 @@ final class JsonRpcMessage
     public static function fromArray(array $data): self
     {
         if ('2.0' !== ($data['jsonrpc'] ?? null)) {
-            throw new \InvalidArgumentException('The jsonrpc member must be "2.0".');
+            throw new InvalidArgumentException('The jsonrpc member must be "2.0".');
         }
 
         if (!isset($data['method']) || !\is_string($data['method'])) {
-            throw new \InvalidArgumentException('The method member must be a string.');
+            throw new InvalidArgumentException('The method member must be a string.');
         }
 
         $params = $data['params'] ?? [];
         if (!\is_array($params)) {
-            throw new \InvalidArgumentException('The params member must be an array or object.');
+            throw new InvalidArgumentException('The params member must be an array or object.');
         }
 
         $hasId = \array_key_exists('id', $data);
         $id = $data['id'] ?? null;
         if ($hasId && !\is_int($id) && !\is_float($id) && !\is_string($id) && null !== $id) {
-            throw new \InvalidArgumentException('The id member must be a number, string, or null.');
+            throw new InvalidArgumentException('The id member must be a number, string, or null.');
         }
         /** @var int|float|string|null $id */
 

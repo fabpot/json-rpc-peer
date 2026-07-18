@@ -14,7 +14,7 @@ namespace Fabpot\JsonRpc;
 /**
  * Records raw JSON-RPC traffic for post-hoc debugging.
  *
- * Implementations must redact secrets before persisting a line.
+ * Payloads may contain secrets; implementations must arrange appropriate redaction before persistence.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */

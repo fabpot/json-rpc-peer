@@ -12,9 +12,13 @@
 namespace Fabpot\JsonRpc\Tests;
 
 use Amp\ByteStream\ReadableBuffer;
+use Fabpot\JsonRpc\Exception\ConnectionClosedException;
+use Fabpot\JsonRpc\Exception\ExceptionInterface;
+use Fabpot\JsonRpc\Exception\InvalidResponseException;
+use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\JsonRpcError;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Fabpot\JsonRpc\JsonRpcError;
 use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
 
@@ -137,7 +141,8 @@ final class JsonRpcPeerTest extends TestCase
         try {
             $response->await();
             $this->fail('The remote error was not raised.');
-        } catch (\Fabpot\JsonRpc\JsonRpcException $e) {
+        } catch (JsonRpcException $e) {
+            $this->assertInstanceOf(ExceptionInterface::class, $e);
             $this->assertSame(JsonRpcError::INVALID_PARAMS, $e->getCode());
             $this->assertSame('Bad params', $e->getMessage());
             $this->assertSame(['field' => 'value'], $e->getData());
@@ -163,7 +168,7 @@ final class JsonRpcPeerTest extends TestCase
 
         $peer->listen();
 
-        $this->expectException(\UnexpectedValueException::class);
+        $this->expectException(InvalidResponseException::class);
         $this->expectExceptionMessage('Received an invalid JSON-RPC response.');
         $response->await();
     }
@@ -175,7 +180,7 @@ final class JsonRpcPeerTest extends TestCase
 
         $peer->listen();
 
-        $this->expectException(\RuntimeException::class);
+        $this->expectException(ConnectionClosedException::class);
         $this->expectExceptionMessage('The JSON-RPC connection closed before a response was received.');
         $response->await();
     }
