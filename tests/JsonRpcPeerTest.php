@@ -12,8 +12,11 @@
 namespace Fabpot\JsonRpc\Tests;
 
 use Amp\ByteStream\ReadableBuffer;
+use Fabpot\JsonRpc\BatchNotification;
+use Fabpot\JsonRpc\BatchRequest;
 use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\ExceptionInterface;
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcError;
@@ -235,6 +238,51 @@ final class JsonRpcPeerTest extends TestCase
             ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'first', 'params' => ['value' => 1]],
             ['jsonrpc' => '2.0', 'id' => 2, 'method' => 'second'],
         ], $output->messages());
+    }
+
+    public function testWritesMixedOutboundBatchAndReturnsRequestFutures(): void
+    {
+        $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":2,"result":"second"},{"jsonrpc":"2.0","id":1,"result":"first"}]');
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer($input, $output);
+
+        $responses = $peer->batch(
+            new BatchRequest('first', ['value' => 1]),
+            new BatchNotification('note'),
+            new BatchRequest('second'),
+        );
+        $peer->listen();
+
+        $this->assertSame('first', $responses[0]->await());
+        $this->assertSame('second', $responses[1]->await());
+        $this->assertSame([[['jsonrpc' => '2.0', 'method' => 'first', 'params' => ['value' => 1], 'id' => 1], ['jsonrpc' => '2.0', 'method' => 'note'], ['jsonrpc' => '2.0', 'method' => 'second', 'id' => 2]]], $output->messages());
+    }
+
+    public function testRejectsEmptyOutboundBatch(): void
+    {
+        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('A JSON-RPC batch must contain at least one entry.');
+        $peer->batch();
+    }
+
+    public function testOutboundBatchEncodingFailureThrowsInvalidArgumentException(): void
+    {
+        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+
+        $this->expectException(InvalidArgumentException::class);
+        $peer->batch(new BatchRequest('invalid', ['value' => \INF]));
+    }
+
+    public function testOutboundBatchWriteFailureThrowsConnectionClosedException(): void
+    {
+        $output = new CapturingStream();
+        $output->close();
+        $peer = new JsonRpcPeer(new ReadableBuffer(''), $output);
+
+        $this->expectException(ConnectionClosedException::class);
+        $peer->batch(new BatchRequest('first'), new BatchNotification('note'));
     }
 
     public function testInboundResponseBatchSettlesMatchingRequests(): void

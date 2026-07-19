@@ -125,6 +125,53 @@ final class JsonRpcPeer implements ResponseSenderInterface
         return $deferred->getFuture();
     }
 
+    /**
+     * @return list<Future<mixed>>
+     */
+    public function batch(BatchRequest|BatchNotification ...$entries): array
+    {
+        if (!$entries) {
+            throw new InvalidArgumentException('A JSON-RPC batch must contain at least one entry.');
+        }
+
+        $payloads = [];
+        $requestKeys = [];
+        $futures = [];
+        foreach ($entries as $entry) {
+            $payload = [
+                'jsonrpc' => '2.0',
+                'method' => $entry->getMethod(),
+            ];
+            if ($entry->getParams()) {
+                $payload['params'] = $entry->getParams();
+            }
+
+            if ($entry instanceof BatchRequest) {
+                $id = $this->nextRequestId++;
+                $deferred = new DeferredFuture();
+                $key = $this->requestKey($id);
+                $this->pendingRequests[$key] = $deferred;
+                $payload['id'] = $id;
+                $requestKeys[] = $key;
+                $futures[] = $deferred->getFuture();
+            }
+
+            $payloads[] = $payload;
+        }
+
+        try {
+            $this->send($payloads);
+        } catch (\Throwable $e) {
+            foreach ($requestKeys as $key) {
+                unset($this->pendingRequests[$key]);
+            }
+
+            throw $e;
+        }
+
+        return $futures;
+    }
+
     public function respond(int|float|string|null $id, mixed $result): void
     {
         $this->writer->write([
@@ -184,6 +231,26 @@ final class JsonRpcPeer implements ResponseSenderInterface
             $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
 
             return;
+        }
+
+        foreach ($entries as $entry) {
+            if (!\is_array($entry) || array_is_list($entry)) {
+                continue;
+            }
+            /** @var array<string, mixed> $entry */
+
+            if ($this->isResponse($entry)) {
+                foreach ($entries as $response) {
+                    if (!\is_array($response) || array_is_list($response)) {
+                        continue;
+                    }
+                    /** @var array<string, mixed> $response */
+
+                    $this->handleResponse($response);
+                }
+
+                return;
+            }
         }
 
         $sender = new BatchResponseSender($this->writer);

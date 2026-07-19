@@ -127,6 +127,21 @@ The peer can also push notifications to the other side at any time:
 $peer->notify('progress', ['percent' => 42]);
 ```
 
+For protocols that use JSON-RPC batches, pass explicit request and notification
+entries. The returned array contains futures for request entries only, in the
+same order as those requests:
+
+```php
+use Fabpot\JsonRpc\BatchNotification;
+use Fabpot\JsonRpc\BatchRequest;
+
+[$status, $configuration] = $peer->batch(
+    new BatchRequest('workspace/status'),
+    new BatchNotification('progress', ['percent' => 42]),
+    new BatchRequest('workspace/configuration'),
+);
+```
+
 ### Running the loop
 
 `listen()` reads inbound lines until the stream closes, dispatching each
@@ -139,11 +154,9 @@ $peer->listen();
 
 ## Spec conformance
 
-The peer implements the JSON-RPC 2.0 spec with one deliberate exception: batch
-calls are not supported. The stdio protocols this library targets never batch
-(the Model Context Protocol even removed JSON-RPC batching), so an inbound
-JSON array is answered with a single Invalid Request error instead of a batch
-of responses, and the peer never emits batches.
+The peer implements JSON-RPC 2.0, including mixed request and notification
+batches. Batch responses are emitted once every request has settled and may be
+ordered by settlement rather than input order, as allowed by the specification.
 
 ## Traffic logging
 
