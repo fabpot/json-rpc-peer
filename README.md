@@ -59,6 +59,8 @@ Register handlers by method name. A request handler receives the params and a
 only the params and never produces a response.
 
 ```php
+use Fabpot\JsonRpc\RequestResponder;
+
 $dispatcher->onRequest('sum', function (array $params, RequestResponder $responder): void {
     $responder->resolve(['total' => array_sum($params['values'])]);
 });
@@ -121,6 +123,10 @@ $listener = \Amp\async($peer->listen(...));
 $result = $peer->request('workspace/status', ['workspace' => '/project'])->await();
 ```
 
+Close the input stream to stop `listen()`. Closing the input also fails every
+outstanding request with a
+`Fabpot\JsonRpc\Exception\ConnectionClosedException`.
+
 The peer can also push notifications to the other side at any time:
 
 ```php
@@ -140,6 +146,9 @@ use Fabpot\JsonRpc\BatchRequest;
     new BatchNotification('progress', ['percent' => 42]),
     new BatchRequest('workspace/configuration'),
 );
+
+$status = $status->await();
+$configuration = $configuration->await();
 ```
 
 ### Running the loop
