@@ -20,6 +20,7 @@ use Fabpot\JsonRpc\Exception\ExceptionInterface;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\Exception\RuntimeException;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -376,6 +377,17 @@ final class JsonRpcPeerTest extends TestCase
         $peer->listen();
 
         $this->assertSame('ok', $response->await());
+    }
+
+    public function testStreamWriteFailureThrowsRuntimeException(): void
+    {
+        $output = new CapturingStream();
+        $output->failNextWrite();
+        $peer = new JsonRpcPeer(new ReadableBuffer(''), $output);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Failed to write to the JSON-RPC connection.');
+        $peer->notify('ping');
     }
 
     public function testRequestOnClosedOutputThrowsConnectionClosedException(): void
