@@ -11,6 +11,7 @@
 
 namespace Fabpot\JsonRpc\Tests;
 
+use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableBuffer;
 use Fabpot\JsonRpc\BatchNotification;
 use Fabpot\JsonRpc\BatchRequest;
@@ -19,12 +20,15 @@ use Fabpot\JsonRpc\Exception\ExceptionInterface;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
 use Fabpot\JsonRpc\RequestResponder;
+
+use function Amp\async;
 
 final class JsonRpcPeerTest extends TestCase
 {
@@ -49,6 +53,28 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame(1, $received[0]->getId());
         $this->assertSame(['x' => 1], $received[0]->getParams());
         $this->assertTrue($received[1]->isNotification());
+    }
+
+    public function testPeersExchangeARequestOverLiveDuplexStreams(): void
+    {
+        $clientToServer = new Pipe(4096);
+        $serverToClient = new Pipe(4096);
+        $client = new JsonRpcPeer($serverToClient->getSource(), $clientToServer->getSink());
+        $server = new JsonRpcPeer($clientToServer->getSource(), $serverToClient->getSink());
+        $dispatcher = new JsonRpcDispatcher($server);
+        $dispatcher->onRequest('sum', static function (array $params, RequestResponder $responder): void {
+            $responder->resolve(array_sum($params));
+        });
+
+        $clientListener = async($client->listen(...));
+        $serverListener = async($server->listen(...));
+
+        $this->assertSame(6, $client->request('sum', [1, 2, 3])->await());
+
+        $clientToServer->getSink()->close();
+        $serverToClient->getSink()->close();
+        $clientListener->await();
+        $serverListener->await();
     }
 
     /**
