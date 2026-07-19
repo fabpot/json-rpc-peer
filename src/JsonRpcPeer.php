@@ -34,6 +34,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
 
     private readonly JsonRpcWriter $writer;
     private int $nextRequestId = 1;
+    private bool $listenerStopped = false;
 
     /** @var array<string, DeferredFuture<mixed>> */
     private array $pendingRequests = [];
@@ -95,6 +96,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
                 }
             }
         } finally {
+            $this->listenerStopped = true;
             foreach ($this->pendingRequests as $deferred) {
                 if (!$deferred->isComplete()) {
                     $deferred->error(new ConnectionClosedException('The JSON-RPC connection closed before a response was received.'));
@@ -111,6 +113,10 @@ final class JsonRpcPeer implements ResponseSenderInterface
      */
     public function request(string $method, array $params = []): Future
     {
+        if ($this->listenerStopped) {
+            throw new ConnectionClosedException('The JSON-RPC connection is closed.');
+        }
+
         $id = $this->nextRequestId++;
         $deferred = new DeferredFuture();
         $this->pendingRequests[$this->requestKey($id)] = $deferred;
@@ -141,6 +147,9 @@ final class JsonRpcPeer implements ResponseSenderInterface
     {
         if (!$entries) {
             throw new InvalidArgumentException('A JSON-RPC batch must contain at least one entry.');
+        }
+        if ($this->listenerStopped && array_any($entries, static fn(BatchRequest|BatchNotification $entry): bool => $entry instanceof BatchRequest)) {
+            throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
 
         $payloads = [];

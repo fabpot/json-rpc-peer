@@ -504,6 +504,26 @@ final class JsonRpcPeerTest extends TestCase
         $response->await();
     }
 
+    public function testRequestAfterListenerStopsThrowsConnectionClosedException(): void
+    {
+        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+        $peer->listen();
+
+        $this->expectException(ConnectionClosedException::class);
+        $this->expectExceptionMessage('The JSON-RPC connection is closed.');
+        $peer->request('too-late');
+    }
+
+    public function testBatchRequestAfterListenerStopsThrowsConnectionClosedException(): void
+    {
+        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+        $peer->listen();
+
+        $this->expectException(ConnectionClosedException::class);
+        $this->expectExceptionMessage('The JSON-RPC connection is closed.');
+        $peer->batch(new BatchNotification('note'), new BatchRequest('too-late'));
+    }
+
     public function testConnectionCloseFailsPendingRequests(): void
     {
         $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
