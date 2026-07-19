@@ -11,6 +11,7 @@
 
 namespace Fabpot\JsonRpc;
 
+/** @internal */
 final class BatchResponseSender implements ResponseSenderInterface
 {
     /** @var list<array<string, mixed>> */

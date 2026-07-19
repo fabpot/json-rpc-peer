@@ -11,6 +11,7 @@
 
 namespace Fabpot\JsonRpc;
 
+/** @internal */
 interface ResponseSenderInterface
 {
     public function respond(int|float|string|null $id, mixed $result): void;

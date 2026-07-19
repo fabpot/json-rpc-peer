@@ -18,6 +18,7 @@ use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\RuntimeException;
 
+/** @internal */
 final class JsonRpcWriter
 {
     public function __construct(
