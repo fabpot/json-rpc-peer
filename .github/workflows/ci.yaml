@@ -1,0 +1,27 @@
+name: CI
+
+on:
+    push:
+    pull_request:
+
+permissions:
+    contents: read
+
+jobs:
+    tests:
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                php-version: ['8.4', '8.5']
+
+        steps:
+            - uses: actions/checkout@v4
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: ${{ matrix.php-version }}
+                  coverage: none
+            - run: composer install --prefer-dist --no-interaction --no-progress
+            - run: composer validate --strict
+            - run: ./vendor/bin/php-cs-fixer fix --dry-run --diff --show-progress=none
+            - run: ./vendor/bin/phpstan analyze --no-progress
+            - run: ./vendor/bin/phpunit --no-progress
