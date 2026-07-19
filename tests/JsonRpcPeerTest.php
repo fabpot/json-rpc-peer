@@ -178,6 +178,38 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame([[...array_fill(0, 3, $error)]], $output->messages());
     }
 
+    public function testInvalidBatchEntryWithMethodDoesNotTurnResponseArrayIntoRequestBatch(): void
+    {
+        $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"result":"ok"},{"jsonrpc":"1.0","method":"invalid"}]');
+        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $response = $peer->request('request');
+
+        $peer->listen();
+
+        $this->assertSame('ok', $response->await());
+    }
+
+    public function testBatchTreatsResponseShapedEntryAsInvalidRequest(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"request"},{"jsonrpc":"2.0","id":2,"result":"not a request"}]'), $output);
+        $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder): void {
+            $responder?->resolve('ok');
+        });
+
+        $peer->listen();
+
+        $this->assertSame([[[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'result' => 'ok',
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ]]], $output->messages());
+    }
+
     public function testNotificationOnlyBatchProducesNoResponse(): void
     {
         $output = new CapturingStream();

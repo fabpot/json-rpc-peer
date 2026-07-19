@@ -83,7 +83,11 @@ final class JsonRpcPeer implements ResponseSenderInterface
                 }
                 /** @var array<string, mixed> $decoded */
 
-                $this->handleEntry($decoded, $this);
+                if ($this->isResponse($decoded)) {
+                    $this->handleResponse($decoded);
+                } else {
+                    $this->handleRequest($decoded, $this);
+                }
             }
         } finally {
             foreach ($this->pendingRequests as $deferred) {
@@ -116,7 +120,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
         }
 
         try {
-            $this->send($payload);
+            $this->writer->write($payload);
         } catch (\Throwable $e) {
             unset($this->pendingRequests[$this->requestKey($id)]);
             throw $e;
@@ -160,7 +164,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
         }
 
         try {
-            $this->send($payloads);
+            $this->writer->write($payloads);
         } catch (\Throwable $e) {
             foreach ($requestKeys as $key) {
                 unset($this->pendingRequests[$key]);
@@ -211,14 +215,6 @@ final class JsonRpcPeer implements ResponseSenderInterface
             $payload['params'] = $params;
         }
 
-        $this->send($payload);
-    }
-
-    /**
-     * @param array<array-key, mixed> $payload
-     */
-    private function send(array $payload): void
-    {
         $this->writer->write($payload);
     }
 
@@ -233,35 +229,28 @@ final class JsonRpcPeer implements ResponseSenderInterface
             return;
         }
 
-        foreach ($entries as $entry) {
-            if (!\is_array($entry) || array_is_list($entry)) {
-                continue;
-            }
-            /** @var array<string, mixed> $entry */
-
-            if ($this->isResponse($entry)) {
-                foreach ($entries as $response) {
-                    if (!\is_array($response) || array_is_list($response)) {
-                        continue;
-                    }
-                    /** @var array<string, mixed> $response */
-
-                    $this->handleResponse($response);
+        if ($this->isResponseBatch($entries)) {
+            foreach ($entries as $response) {
+                if (!\is_array($response) || array_is_list($response)) {
+                    continue;
                 }
+                /** @var array<string, mixed> $response */
 
-                return;
+                $this->handleResponse($response);
             }
+
+            return;
         }
 
         $sender = new BatchResponseSender($this->writer);
         foreach ($entries as $entry) {
             if (!\is_array($entry) || array_is_list($entry)) {
-                $sender->addInvalidRequest(null);
+                $sender->addInvalidRequest();
                 continue;
             }
             /** @var array<string, mixed> $entry */
 
-            $this->handleEntry($entry, $sender);
+            $this->handleRequest($entry, $sender);
         }
         $sender->seal();
     }
@@ -269,19 +258,13 @@ final class JsonRpcPeer implements ResponseSenderInterface
     /**
      * @param array<string, mixed> $entry
      */
-    private function handleEntry(array $entry, ResponseSenderInterface $sender): void
+    private function handleRequest(array $entry, ResponseSenderInterface $sender): void
     {
-        if ($this->isResponse($entry)) {
-            $this->handleResponse($entry);
-
-            return;
-        }
-
         try {
             $message = JsonRpcMessage::fromArray($entry);
         } catch (InvalidArgumentException) {
             if ($sender instanceof BatchResponseSender) {
-                $sender->addInvalidRequest(null);
+                $sender->addInvalidRequest();
             } else {
                 $sender->respondError($this->validResponseId($entry['id'] ?? null), JsonRpcError::INVALID_REQUEST, 'Invalid Request');
             }
@@ -311,6 +294,30 @@ final class JsonRpcPeer implements ResponseSenderInterface
         }
 
         ($this->messageHandler)($message, $responder);
+    }
+
+    /**
+     * @param list<mixed> $entries
+     */
+    private function isResponseBatch(array $entries): bool
+    {
+        $hasResponse = false;
+        foreach ($entries as $entry) {
+            if (!\is_array($entry) || array_is_list($entry)) {
+                continue;
+            }
+            /** @var array<string, mixed> $entry */
+
+            try {
+                JsonRpcMessage::fromArray($entry);
+
+                return false;
+            } catch (InvalidArgumentException) {
+                $hasResponse = $hasResponse || $this->isResponse($entry);
+            }
+        }
+
+        return $hasResponse;
     }
 
     /**
