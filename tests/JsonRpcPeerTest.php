@@ -58,6 +58,7 @@ final class JsonRpcPeerTest extends TestCase
         yield 'scalar params' => ['{"jsonrpc":"2.0","id":4,"method":"ping","params":42}', 4];
         yield 'null params' => ['{"jsonrpc":"2.0","id":4,"method":"ping","params":null}', 4];
         yield 'invalid id' => ['{"jsonrpc":"2.0","id":{},"method":"ping"}', null];
+        yield 'non-finite id' => ['{"jsonrpc":"2.0","id":1e400,"method":"ping"}', null];
         yield 'batch' => ['[]', null];
     }
 
@@ -207,6 +208,25 @@ final class JsonRpcPeerTest extends TestCase
         $this->expectException(ConnectionClosedException::class);
         $this->expectExceptionMessage('The JSON-RPC connection closed before a response was received.');
         $response->await();
+    }
+
+    public function testRejectsNonJsonWhitespaceAroundMessage(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer("\0{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\0\n"), $output);
+        $handled = false;
+        $peer->onMessage(static function () use (&$handled): void {
+            $handled = true;
+        });
+
+        $peer->listen();
+
+        $this->assertFalse($handled);
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => ['code' => JsonRpcError::PARSE_ERROR, 'message' => 'Parse error'],
+        ]], $output->messages());
     }
 
     public function testMalformedLineYieldsParseErrorAndKeepsReading(): void

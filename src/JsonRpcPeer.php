@@ -58,7 +58,7 @@ final class JsonRpcPeer
     {
         try {
             foreach (splitLines($this->input) as $line) {
-                $line = trim($line);
+                $line = trim($line, " \t\r\n");
                 if ('' === $line) {
                     continue;
                 }
@@ -227,7 +227,7 @@ final class JsonRpcPeer
         }
 
         $id = $data['id'];
-        if (!\is_int($id) && !\is_float($id) && !\is_string($id)) {
+        if (!\is_int($id) && !\is_string($id) && (!\is_float($id) || !is_finite($id))) {
             return;
         }
 
@@ -283,6 +283,6 @@ final class JsonRpcPeer
 
     private function validResponseId(mixed $id): int|float|string|null
     {
-        return \is_int($id) || \is_float($id) || \is_string($id) ? $id : null;
+        return \is_int($id) || \is_string($id) || (\is_float($id) && is_finite($id)) ? $id : null;
     }
 }
