@@ -112,6 +112,25 @@ final class JsonRpcPeerTest extends TestCase
         ]], $output->messages());
     }
 
+    public function testObjectWithSequentialNumericKeysIsNotTreatedAsBatch(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('{"0":{"jsonrpc":"2.0","id":1,"method":"executed"}}'), $output);
+        $handled = false;
+        $peer->onMessage(static function () use (&$handled): void {
+            $handled = true;
+        });
+
+        $peer->listen();
+
+        $this->assertFalse($handled);
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ]], $output->messages());
+    }
+
     public function testEmptyBatchProducesSingleInvalidRequest(): void
     {
         $output = new CapturingStream();

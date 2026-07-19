@@ -77,7 +77,12 @@ final class JsonRpcPeer implements ResponseSenderInterface
                     continue;
                 }
 
-                if (array_is_list($decoded)) {
+                if ('[' === $line[0]) {
+                    if (!array_is_list($decoded)) {
+                        $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
+                        continue;
+                    }
+
                     $this->handleBatch($decoded);
                     continue;
                 }
