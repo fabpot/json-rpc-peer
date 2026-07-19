@@ -31,12 +31,7 @@ final class JsonRpcWriter
      */
     public function write(array $payload): void
     {
-        try {
-            $line = json_encode($payload, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);
-        } catch (\JsonException $e) {
-            throw new InvalidArgumentException('The JSON-RPC payload cannot be encoded to JSON.', 0, $e);
-        }
-
+        $line = $this->encode($payload);
         $this->trafficLogger?->logOutbound($line);
 
         try {
@@ -45,6 +40,18 @@ final class JsonRpcWriter
             throw new ConnectionClosedException('The JSON-RPC connection is closed.', 0, $e);
         } catch (StreamException $e) {
             throw new RuntimeException('Failed to write to the JSON-RPC connection.', 0, $e);
+        }
+    }
+
+    /**
+     * @param array<array-key, mixed> $payload
+     */
+    public function encode(array $payload): string
+    {
+        try {
+            return json_encode($payload, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);
+        } catch (\JsonException $e) {
+            throw new InvalidArgumentException('The JSON-RPC payload cannot be encoded to JSON.', 0, $e);
         }
     }
 }

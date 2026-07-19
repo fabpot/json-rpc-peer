@@ -11,6 +11,8 @@
 
 namespace Fabpot\JsonRpc;
 
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
+
 /** @internal */
 final class BatchResponseSender implements ResponseSenderInterface
 {
@@ -78,6 +80,19 @@ final class BatchResponseSender implements ResponseSenderInterface
      */
     private function settle(array $response): void
     {
+        try {
+            $this->writer->encode($response);
+        } catch (InvalidArgumentException) {
+            $response = [
+                'jsonrpc' => '2.0',
+                'id' => $response['id'],
+                'error' => [
+                    'code' => JsonRpcError::INTERNAL_ERROR,
+                    'message' => 'Internal error',
+                ],
+            ];
+        }
+
         $this->responses[] = $response;
         --$this->pendingResponses;
         $this->flush();

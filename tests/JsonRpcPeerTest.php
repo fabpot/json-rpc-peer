@@ -281,6 +281,42 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame([], $output->messages());
     }
 
+    public function testBatchNotificationFailureDoesNotPreventSiblingRequest(): void
+    {
+        $output = $this->drivePeer('[{"jsonrpc":"2.0","method":"bad"},{"jsonrpc":"2.0","id":1,"method":"good"}]', static function (JsonRpcDispatcher $dispatcher): void {
+            $dispatcher->onNotification('bad', static function (): void {
+                throw new \RuntimeException('Notification failed.');
+            });
+            $dispatcher->onRequest('good', static function (array $params, RequestResponder $responder): void {
+                $responder->resolve('ok');
+            });
+        });
+
+        $this->assertSame([[['jsonrpc' => '2.0', 'id' => 1, 'result' => 'ok']]], $output->messages());
+    }
+
+    public function testUnencodableBatchResultBecomesInternalErrorWithoutDroppingSiblingResponse(): void
+    {
+        $output = $this->drivePeer('[{"jsonrpc":"2.0","id":1,"method":"bad"},{"jsonrpc":"2.0","id":2,"method":"good"}]', static function (JsonRpcDispatcher $dispatcher): void {
+            $dispatcher->onRequest('bad', static function (array $params, RequestResponder $responder): void {
+                $responder->resolve(\INF);
+            });
+            $dispatcher->onRequest('good', static function (array $params, RequestResponder $responder): void {
+                $responder->resolve('ok');
+            });
+        });
+
+        $this->assertSame([[[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error'],
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => 2,
+            'result' => 'ok',
+        ]]], $output->messages());
+    }
+
     public function testBatchWaitsForDeferredResponsesAndUsesSettlementOrder(): void
     {
         $output = new CapturingStream();
@@ -517,5 +553,19 @@ final class JsonRpcPeerTest extends TestCase
             'error' => ['code' => JsonRpcError::PARSE_ERROR, 'message' => 'Parse error'],
         ]], $output->messages());
         $this->assertSame(['ping'], $seen, 'A malformed line must not stop the peer from reading the next one.');
+    }
+
+    /**
+     * @param callable(JsonRpcDispatcher): void $configure
+     */
+    private function drivePeer(string $input, callable $configure): CapturingStream
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer($input), $output);
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $configure($dispatcher);
+        $peer->listen();
+
+        return $output;
     }
 }
