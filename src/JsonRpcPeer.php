@@ -358,6 +358,12 @@ final class JsonRpcPeer implements ResponseSenderInterface
         }
 
         if ($hasResult) {
+            if ($this->containsNonFiniteFloat($data['result'])) {
+                $this->failInvalidResponse($key, $deferred);
+
+                return;
+            }
+
             unset($this->pendingRequests[$key]);
             $deferred->complete($data['result']);
 
@@ -365,7 +371,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
         }
 
         $error = $data['error'];
-        if (!\is_array($error) || array_is_list($error) || !\is_int($error['code'] ?? null) || !\is_string($error['message'] ?? null)) {
+        if (!\is_array($error) || array_is_list($error) || !\is_int($error['code'] ?? null) || !\is_string($error['message'] ?? null) || $this->containsNonFiniteFloat($error['data'] ?? null)) {
             $this->failInvalidResponse($key, $deferred);
 
             return;
@@ -373,6 +379,25 @@ final class JsonRpcPeer implements ResponseSenderInterface
 
         unset($this->pendingRequests[$key]);
         $deferred->error(new JsonRpcException($error['code'], $error['message'], $error['data'] ?? null));
+    }
+
+    private function containsNonFiniteFloat(mixed $value): bool
+    {
+        if (\is_float($value)) {
+            return !is_finite($value);
+        }
+
+        if (!\is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if ($this->containsNonFiniteFloat($item)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

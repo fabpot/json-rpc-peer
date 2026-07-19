@@ -390,6 +390,9 @@ final class JsonRpcPeerTest extends TestCase
         yield 'missing result and error' => ['{"jsonrpc":"2.0","id":1}'];
         yield 'result and error' => ['{"jsonrpc":"2.0","id":1,"result":null,"error":{"code":-32603,"message":"error"}}'];
         yield 'invalid error' => ['{"jsonrpc":"2.0","id":1,"error":{"code":"invalid","message":"error"}}'];
+        yield 'non-finite result' => ['{"jsonrpc":"2.0","id":1,"result":1e400}'];
+        yield 'nested non-finite result' => ['{"jsonrpc":"2.0","id":1,"result":{"value":1e400}}'];
+        yield 'non-finite error data' => ['{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"error","data":{"value":1e400}}}'];
     }
 
     #[DataProvider('invalidResponseProvider')]
