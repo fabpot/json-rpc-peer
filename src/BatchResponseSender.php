@@ -81,7 +81,7 @@ final class BatchResponseSender implements ResponseSenderInterface
     private function settle(array $response): void
     {
         try {
-            $this->writer->encode($response);
+            $this->writer->encode([$response]);
         } catch (InvalidArgumentException) {
             $response = [
                 'jsonrpc' => '2.0',

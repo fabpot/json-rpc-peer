@@ -320,6 +320,25 @@ final class JsonRpcPeerTest extends TestCase
         ]]], $output->messages());
     }
 
+    public function testResultTooDeepForBatchBecomesInternalError(): void
+    {
+        $result = 'leaf';
+        for ($i = 0; $i < 511; ++$i) {
+            $result = [$result];
+        }
+
+        $output = $this->drivePeer('[{"jsonrpc":"2.0","id":1,"method":"deep"},{"jsonrpc":"2.0","id":2,"method":"good"}]', static function (JsonRpcDispatcher $dispatcher) use ($result): void {
+            $dispatcher->onRequest('deep', static function (array $params, RequestResponder $responder) use ($result): void {
+                $responder->resolve($result);
+            });
+            $dispatcher->onRequest('good', static function (array $params, RequestResponder $responder): void {
+                $responder->resolve('ok');
+            });
+        });
+
+        $this->assertSame([[['jsonrpc' => '2.0', 'id' => 1, 'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error']], ['jsonrpc' => '2.0', 'id' => 2, 'result' => 'ok']]], $output->messages());
+    }
+
     public function testBatchWaitsForDeferredResponsesAndUsesSettlementOrder(): void
     {
         $output = new CapturingStream();
