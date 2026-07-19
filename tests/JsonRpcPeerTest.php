@@ -90,6 +90,9 @@ final class JsonRpcPeerTest extends TestCase
         yield 'null params' => ['{"jsonrpc":"2.0","id":4,"method":"ping","params":null}', 4];
         yield 'invalid id' => ['{"jsonrpc":"2.0","id":{},"method":"ping"}', null];
         yield 'non-finite id' => ['{"jsonrpc":"2.0","id":1e400,"method":"ping"}', null];
+        yield 'unsafe integer id' => ['{"jsonrpc":"2.0","id":9223372036854775809,"method":"ping"}', null];
+        yield 'unsafe float id' => ['{"jsonrpc":"2.0","id":9007199254740993.0,"method":"ping"}', null];
+        yield 'nested non-finite params' => ['{"jsonrpc":"2.0","id":5,"method":"ping","params":{"nested":{"value":1e400}}}', 5];
     }
 
     #[DataProvider('invalidRequestProvider')]

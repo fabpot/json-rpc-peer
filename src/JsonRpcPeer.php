@@ -353,7 +353,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
         }
 
         $id = $data['id'];
-        if (!\is_int($id) && !\is_string($id) && (!\is_float($id) || !is_finite($id))) {
+        if (!\is_int($id) && !\is_string($id) && (!\is_float($id) || !$this->isSafeFloatId($id))) {
             return;
         }
 
@@ -434,6 +434,19 @@ final class JsonRpcPeer implements ResponseSenderInterface
 
     private function validResponseId(mixed $id): int|float|string|null
     {
-        return \is_int($id) || \is_string($id) || (\is_float($id) && is_finite($id)) ? $id : null;
+        if (\is_int($id) || \is_string($id)) {
+            return $id;
+        }
+
+        if (!\is_float($id) || !$this->isSafeFloatId($id)) {
+            return null;
+        }
+
+        return $id;
+    }
+
+    private function isSafeFloatId(float $id): bool
+    {
+        return is_finite($id) && ($id !== floor($id) || ($id >= -9_007_199_254_740_991 && $id <= 9_007_199_254_740_991));
     }
 }
