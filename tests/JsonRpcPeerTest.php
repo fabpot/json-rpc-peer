@@ -21,6 +21,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
+use Fabpot\JsonRpc\RequestResponder;
 
 final class JsonRpcPeerTest extends TestCase
 {
@@ -59,7 +60,6 @@ final class JsonRpcPeerTest extends TestCase
         yield 'null params' => ['{"jsonrpc":"2.0","id":4,"method":"ping","params":null}', 4];
         yield 'invalid id' => ['{"jsonrpc":"2.0","id":{},"method":"ping"}', null];
         yield 'non-finite id' => ['{"jsonrpc":"2.0","id":1e400,"method":"ping"}', null];
-        yield 'batch' => ['[]', null];
     }
 
     #[DataProvider('invalidRequestProvider')]
@@ -78,6 +78,20 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame([[
             'jsonrpc' => '2.0',
             'id' => $expectedId,
+            'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ]], $output->messages());
+    }
+
+    public function testEmptyBatchProducesSingleInvalidRequest(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer("[]\n"), $output);
+
+        $peer->listen();
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => null,
             'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
         ]], $output->messages());
     }
@@ -113,6 +127,95 @@ final class JsonRpcPeerTest extends TestCase
         ], $output->messages());
     }
 
+    public function testDispatchesMixedBatchAndReturnsResponseArray(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","method":"note"},42,{"jsonrpc":"2.0","id":2,"method":"second"}]'), $output);
+        $notificationSeen = false;
+        $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder) use (&$notificationSeen): void {
+            if ($message->isNotification()) {
+                $notificationSeen = true;
+
+                return;
+            }
+
+            $responder?->resolve($message->getMethod());
+        });
+
+        $peer->listen();
+
+        $this->assertTrue($notificationSeen);
+        $this->assertSame([[[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'result' => 'first',
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => 2,
+            'result' => 'second',
+        ]]], $output->messages());
+    }
+
+    public function testBatchReturnsOneErrorForEachInvalidEntry(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('[1,[],{"jsonrpc":"2.0","id":7}]'), $output);
+
+        $peer->listen();
+
+        $error = [
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ];
+        $this->assertSame([[...array_fill(0, 3, $error)]], $output->messages());
+    }
+
+    public function testNotificationOnlyBatchProducesNoResponse(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","method":"first"},{"jsonrpc":"2.0","method":"second"}]'), $output);
+        $seen = [];
+        $peer->onMessage(static function (JsonRpcMessage $message) use (&$seen): void {
+            $seen[] = $message->getMethod();
+        });
+
+        $peer->listen();
+
+        $this->assertSame(['first', 'second'], $seen);
+        $this->assertSame([], $output->messages());
+    }
+
+    public function testBatchWaitsForDeferredResponsesAndUsesSettlementOrder(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","id":2,"method":"second"}]'), $output);
+        $responders = [];
+        $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder) use (&$responders): void {
+            $responders[$message->getMethod()] = $responder;
+        });
+
+        $peer->listen();
+
+        $this->assertSame([], $output->messages());
+        $responders['second']?->resolve(2);
+        $this->assertSame([], $output->messages());
+        $responders['first']?->resolve(1);
+        $this->assertSame([[[
+            'jsonrpc' => '2.0',
+            'id' => 2,
+            'result' => 2,
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'result' => 1,
+        ]]], $output->messages());
+    }
+
     public function testOutboundRequestsResolveOutOfOrder(): void
     {
         $input = new ReadableBuffer(
@@ -132,6 +235,20 @@ final class JsonRpcPeerTest extends TestCase
             ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'first', 'params' => ['value' => 1]],
             ['jsonrpc' => '2.0', 'id' => 2, 'method' => 'second'],
         ], $output->messages());
+    }
+
+    public function testInboundResponseBatchSettlesMatchingRequests(): void
+    {
+        $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":2,"result":"second"},{"jsonrpc":"1.0","id":1,"result":"invalid"},{"jsonrpc":"2.0","id":99,"result":"unknown"}]');
+        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $first = $peer->request('first');
+        $second = $peer->request('second');
+
+        $peer->listen();
+
+        $this->assertSame('second', $second->await());
+        $this->expectException(InvalidResponseException::class);
+        $first->await();
     }
 
     public function testResponseWithFloatIdResolvesTheMatchingIntRequest(): void

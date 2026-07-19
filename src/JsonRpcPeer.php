@@ -11,9 +11,7 @@
 
 namespace Fabpot\JsonRpc;
 
-use Amp\ByteStream\ClosedException;
 use Amp\ByteStream\ReadableStream;
-use Amp\ByteStream\StreamException;
 use Amp\ByteStream\WritableStream;
 use Amp\DeferredFuture;
 use Amp\Future;
@@ -21,7 +19,6 @@ use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
-use Fabpot\JsonRpc\Exception\RuntimeException;
 
 use function Amp\ByteStream\splitLines;
 
@@ -30,11 +27,12 @@ use function Amp\ByteStream\splitLines;
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-final class JsonRpcPeer
+final class JsonRpcPeer implements ResponseSenderInterface
 {
-    /** @var (callable(JsonRpcMessage): void)|null */
+    /** @var (callable(JsonRpcMessage, RequestResponder|null): void)|null */
     private $messageHandler;
 
+    private readonly JsonRpcWriter $writer;
     private int $nextRequestId = 1;
 
     /** @var array<string, DeferredFuture<mixed>> */
@@ -42,12 +40,14 @@ final class JsonRpcPeer
 
     public function __construct(
         private readonly ReadableStream $input,
-        private readonly WritableStream $output,
+        WritableStream $output,
         private readonly ?TrafficLoggerInterface $trafficLogger = null,
-    ) {}
+    ) {
+        $this->writer = new JsonRpcWriter($output, $trafficLogger);
+    }
 
     /**
-     * @param callable(JsonRpcMessage): void $handler
+     * @param callable(JsonRpcMessage, RequestResponder|null): void $handler
      */
     public function onMessage(callable $handler): void
     {
@@ -72,28 +72,18 @@ final class JsonRpcPeer
                     continue;
                 }
 
-                if (!\is_array($decoded) || array_is_list($decoded)) {
+                if (!\is_array($decoded)) {
                     $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
+                    continue;
+                }
+
+                if (array_is_list($decoded)) {
+                    $this->handleBatch($decoded);
                     continue;
                 }
                 /** @var array<string, mixed> $decoded */
 
-                if ($this->isResponse($decoded)) {
-                    $this->handleResponse($decoded);
-                    continue;
-                }
-
-                try {
-                    $message = JsonRpcMessage::fromArray($decoded);
-                } catch (InvalidArgumentException) {
-                    $id = $this->validResponseId($decoded['id'] ?? null);
-                    $this->respondError($id, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
-                    continue;
-                }
-
-                if (null !== $this->messageHandler) {
-                    ($this->messageHandler)($message);
-                }
+                $this->handleEntry($decoded, $this);
             }
         } finally {
             foreach ($this->pendingRequests as $deferred) {
@@ -137,7 +127,7 @@ final class JsonRpcPeer
 
     public function respond(int|float|string|null $id, mixed $result): void
     {
-        $this->send([
+        $this->writer->write([
             'jsonrpc' => '2.0',
             'id' => $id,
             'result' => $result,
@@ -154,7 +144,7 @@ final class JsonRpcPeer
             $error['data'] = $data;
         }
 
-        $this->send([
+        $this->writer->write([
             'jsonrpc' => '2.0',
             'id' => $id,
             'error' => $error,
@@ -178,24 +168,70 @@ final class JsonRpcPeer
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param array<array-key, mixed> $payload
      */
     private function send(array $payload): void
     {
-        try {
-            $line = json_encode($payload, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);
-        } catch (\JsonException $e) {
-            throw new InvalidArgumentException('The JSON-RPC payload cannot be encoded to JSON.', 0, $e);
+        $this->writer->write($payload);
+    }
+
+    /**
+     * @param list<mixed> $entries
+     */
+    private function handleBatch(array $entries): void
+    {
+        if (!$entries) {
+            $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
+
+            return;
         }
 
-        $this->trafficLogger?->logOutbound($line);
+        $sender = new BatchResponseSender($this->writer);
+        foreach ($entries as $entry) {
+            if (!\is_array($entry) || array_is_list($entry)) {
+                $sender->addInvalidRequest(null);
+                continue;
+            }
+            /** @var array<string, mixed> $entry */
+
+            $this->handleEntry($entry, $sender);
+        }
+        $sender->seal();
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    private function handleEntry(array $entry, ResponseSenderInterface $sender): void
+    {
+        if ($this->isResponse($entry)) {
+            $this->handleResponse($entry);
+
+            return;
+        }
 
         try {
-            $this->output->write($line . "\n");
-        } catch (ClosedException $e) {
-            throw new ConnectionClosedException('The JSON-RPC connection is closed.', 0, $e);
-        } catch (StreamException $e) {
-            throw new RuntimeException('Failed to write to the JSON-RPC connection.', 0, $e);
+            $message = JsonRpcMessage::fromArray($entry);
+        } catch (InvalidArgumentException) {
+            if ($sender instanceof BatchResponseSender) {
+                $sender->addInvalidRequest(null);
+            } else {
+                $sender->respondError($this->validResponseId($entry['id'] ?? null), JsonRpcError::INVALID_REQUEST, 'Invalid Request');
+            }
+
+            return;
+        }
+
+        $responder = null;
+        if (!$message->isNotification()) {
+            if ($sender instanceof BatchResponseSender) {
+                $sender->reserveResponse();
+            }
+            $responder = new RequestResponder($sender, $message->getId());
+        }
+
+        if (null !== $this->messageHandler) {
+            ($this->messageHandler)($message, $responder);
         }
     }
 

@@ -56,7 +56,7 @@ final class CapturingStream implements WritableStream
     }
 
     /**
-     * @return list<array<string, mixed>>
+     * @return list<array<array-key, mixed>>
      */
     public function messages(): array
     {
@@ -67,10 +67,9 @@ final class CapturingStream implements WritableStream
             }
 
             $message = json_decode($line, true, 512, \JSON_THROW_ON_ERROR);
-            if (!\is_array($message) || array_is_list($message)) {
-                throw new \UnexpectedValueException('Expected a JSON object.');
+            if (!\is_array($message)) {
+                throw new \UnexpectedValueException('Expected a JSON object or array.');
             }
-            /** @var array<string, mixed> $message */
             $messages[] = $message;
         }
 

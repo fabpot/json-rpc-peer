@@ -48,7 +48,7 @@ final class JsonRpcDispatcher
         $this->notificationHandlers[$method] = $handler;
     }
 
-    public function handle(JsonRpcMessage $message): void
+    public function handle(JsonRpcMessage $message, ?RequestResponder $responder = null): void
     {
         $method = $message->getMethod();
         $params = $message->getParams();
@@ -62,7 +62,7 @@ final class JsonRpcDispatcher
             return;
         }
 
-        $responder = new RequestResponder($this->peer, $message->getId());
+        $responder ??= new RequestResponder($this->peer, $message->getId());
         $handler = $this->requestHandlers[$method] ?? null;
         if (null === $handler) {
             $responder->reject(JsonRpcError::METHOD_NOT_FOUND, \sprintf('Method not found: %s', $method));

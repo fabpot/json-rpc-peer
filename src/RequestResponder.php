@@ -21,7 +21,7 @@ final class RequestResponder
     private bool $settled = false;
 
     public function __construct(
-        private readonly JsonRpcPeer $peer,
+        private readonly ResponseSenderInterface $sender,
         private readonly int|float|string|null $id,
     ) {}
 
@@ -31,7 +31,7 @@ final class RequestResponder
             return;
         }
 
-        $this->peer->respond($this->id, $result);
+        $this->sender->respond($this->id, $result);
         $this->settled = true;
     }
 
@@ -41,7 +41,7 @@ final class RequestResponder
             return;
         }
 
-        $this->peer->respondError($this->id, $code, $message, $data);
+        $this->sender->respondError($this->id, $code, $message, $data);
         $this->settled = true;
     }
 

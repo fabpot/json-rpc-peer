@@ -35,6 +35,20 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => ['echoed' => 42]]], $output);
     }
 
+    public function testOneElementBatchReturnsResponseArray(): void
+    {
+        $output = $this->drive(
+            '[{"jsonrpc":"2.0","id":1,"method":"echo","params":{"v":42}}]',
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('echo', static function (array $params, RequestResponder $responder): void {
+                    $responder->resolve($params['v']);
+                });
+            },
+        );
+
+        $this->assertSame([[['jsonrpc' => '2.0', 'id' => 1, 'result' => 42]]], $output);
+    }
+
     public function testThrownJsonRpcExceptionBecomesErrorResponse(): void
     {
         $output = $this->drive(
@@ -119,7 +133,7 @@ final class JsonRpcDispatcherTest extends TestCase
     /**
      * @param callable(JsonRpcDispatcher): void $configure
      *
-     * @return list<array<string, mixed>>
+     * @return list<array<array-key, mixed>>
      */
     private function drive(string $line, callable $configure): array
     {
