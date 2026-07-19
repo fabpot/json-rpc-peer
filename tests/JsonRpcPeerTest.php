@@ -193,6 +193,27 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame([], $output->messages());
     }
 
+    public function testBatchNotificationFailureDoesNotPreventSiblingRequests(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","method":"note"},{"jsonrpc":"2.0","id":1,"method":"request"}]'), $output);
+        $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder): void {
+            if ($message->isNotification()) {
+                throw new \RuntimeException('notification failed');
+            }
+
+            $responder?->resolve('ok');
+        });
+
+        $peer->listen();
+
+        $this->assertSame([[[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'result' => 'ok',
+        ]]], $output->messages());
+    }
+
     public function testBatchWaitsForDeferredResponsesAndUsesSettlementOrder(): void
     {
         $output = new CapturingStream();
