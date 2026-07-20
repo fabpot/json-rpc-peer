@@ -125,7 +125,8 @@ $result = $peer->request('workspace/status', ['workspace' => '/project'])->await
 
 Close the input stream to stop `listen()`. Closing the input also fails every
 outstanding request with a
-`Fabpot\JsonRpc\Exception\ConnectionClosedException`.
+`Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests throw the
+same exception after the listener stops.
 
 The peer can also push notifications to the other side at any time:
 
