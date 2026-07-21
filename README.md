@@ -172,8 +172,8 @@ ordered by settlement rather than input order, as allowed by the specification.
 
 Pass a `TrafficLoggerInterface` to the peer to record raw inbound and outbound
 lines. `PsrTrafficLogger` forwards them to a PSR-3 logger at the `debug` level
-and recursively redacts common credential keys and credentials embedded in
-URLs:
+and recursively redacts common credential keys and credentials in values that
+are URLs:
 
 ```php
 use Fabpot\JsonRpc\PsrTrafficLogger;
@@ -182,4 +182,5 @@ $peer = new JsonRpcPeer($input, $output, new PsrTrafficLogger($logger));
 ```
 
 Pass additional protocol-specific sensitive keys as the second argument when needed.
-Install `psr/log` to use this optional adapter.
+Redaction is intentionally conservative and does not inspect arbitrary text for
+embedded credentials. Install `psr/log` to use this optional adapter.
