@@ -2,7 +2,7 @@
 
 ## 1.0.0
 
-- Add a redacting file traffic logger.
+- Add credential redaction to the PSR-3 traffic logger.
 - Fix JSON-RPC validation, batch isolation, and listener shutdown handling.
 - Add continuous integration for PHP 8.4 and 8.5.
 - Add live duplex communication and stream failure tests.
