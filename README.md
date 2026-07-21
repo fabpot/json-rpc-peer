@@ -171,7 +171,18 @@ ordered by settlement rather than input order, as allowed by the specification.
 ## Traffic logging
 
 Pass a `TrafficLoggerInterface` to the peer to record raw inbound and outbound
-lines. `PsrTrafficLogger` forwards them to a PSR-3 logger at the `debug` level:
+lines. `FileTrafficLogger` appends timestamped traffic to a file and recursively
+redacts common credential keys and credentials embedded in URLs:
+
+```php
+use Fabpot\JsonRpc\FileTrafficLogger;
+
+$peer = new JsonRpcPeer($input, $output, new FileTrafficLogger('/var/log/worker-rpc.log'));
+```
+
+Pass protocol-specific sensitive keys as the second argument when needed.
+`PsrTrafficLogger` forwards unredacted traffic to a PSR-3 logger at the `debug`
+level:
 
 ```php
 use Fabpot\JsonRpc\PsrTrafficLogger;
@@ -179,6 +190,5 @@ use Fabpot\JsonRpc\PsrTrafficLogger;
 $peer = new JsonRpcPeer($input, $output, new PsrTrafficLogger($logger));
 ```
 
-Install `psr/log` to use this optional adapter. JSON-RPC payloads may contain
-secrets, so configure protocol-specific redaction in your logger before
-persisting them.
+Install `psr/log` to use the optional PSR-3 adapter. Configure redaction in the
+PSR logger before persisting JSON-RPC payloads.
