@@ -46,7 +46,7 @@ final class PsrTrafficLogger implements TrafficLoggerInterface
 
     private function log(string $direction, string $line): void
     {
-        $this->logger->debug('JSON-RPC message.', [
+        $this->logger->debug('JSON-RPC {direction}: {message}', [
             'direction' => $direction,
             'message' => $this->redact($line),
         ]);

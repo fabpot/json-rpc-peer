@@ -44,11 +44,11 @@ final class PsrTrafficLoggerTest extends TestCase
         $trafficLogger->logOutbound('{"result":"pong"}');
 
         $this->assertSame([
-            [LogLevel::DEBUG, 'JSON-RPC message.', [
+            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', [
                 'direction' => 'inbound',
                 'message' => '{"authorization":"[redacted]","nested":{"customSecret":"[redacted]","url":"https://[redacted]@example.com/path"}}',
             ]],
-            [LogLevel::DEBUG, 'JSON-RPC message.', ['direction' => 'outbound', 'message' => '{"result":"pong"}']],
+            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'outbound', 'message' => '{"result":"pong"}']],
         ], $logger->records);
     }
 }
