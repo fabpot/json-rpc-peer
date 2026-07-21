@@ -4,12 +4,12 @@ A minimal, asynchronous, bidirectional [JSON-RPC 2.0](https://www.jsonrpc.org/sp
 peer over line-delimited JSON streams, built on [amphp](https://amphp.org) byte
 streams and the [Revolt](https://revolt.run) event loop.
 
-Unlike the HTTP-shaped JSON-RPC libraries common in PHP, this is a **peer**: a
-single long-lived connection over which both sides send requests and
-notifications, answer inbound requests, and resolve responses out of order. It
-is the primitive behind stdio protocols such as the
-[Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
-and the [Model Context Protocol](https://modelcontextprotocol.io).
+This is a **peer** JSON-RPC library: a single long-lived connection over which
+both sides send requests and notifications, answer inbound requests, and
+resolve responses out of order. It is the primitive behind stdio protocols such
+as the [Language Server
+Protocol](https://microsoft.github.io/language-server-protocol/) and the [Model
+Context Protocol](https://modelcontextprotocol.io).
 
 ## Why this exists
 
@@ -19,11 +19,11 @@ synchronously, and cannot let the endpoint initiate a call back to the other
 side. Bidirectional stdio protocols need none of that shape and all of what is
 missing:
 
-- **Peer, not server-or-client**: the same endpoint serves inbound requests and
-  emits its own requests and notifications.
+- **Peer**: the same endpoint serves inbound requests and emits its own
+  requests and notifications.
 - **Persistent duplex transport**: line-delimited JSON over any amphp
   `ReadableStream`/`WritableStream` (stdio, a socket, or in-memory streams for
-  tests), not one-shot HTTP.
+  tests).
 - **Deferred responses**: a request handler may hold its responder and resolve
   it later from another coroutine, so a long-running call can answer while the
   reader keeps processing inbound messages (for example an interrupt) on the
