@@ -24,10 +24,9 @@ missing:
 - **Persistent duplex transport**: line-delimited JSON over any amphp
   `ReadableStream`/`WritableStream` (stdio, a socket, or in-memory streams for
   tests).
-- **Deferred responses**: a request handler may hold its responder and resolve
-  it later from another coroutine, so a long-running call can answer while the
-  reader keeps processing inbound messages (for example an interrupt) on the
-  same connection.
+- **Concurrent requests**: each inbound request runs in its own coroutine, so
+  handlers can suspend on asynchronous work while the peer keeps processing
+  other messages on the same connection.
 
 ## Installation
 
@@ -54,62 +53,109 @@ $dispatcher = new JsonRpcDispatcher($peer);
 
 ### Handling requests and notifications
 
-Register handlers by method name. A request handler receives the params and a
-`RequestResponder` it must resolve or reject. A notification handler receives
-only the params and never produces a response.
+Register handlers by method name. A request handler returns its result; the
+dispatcher sends it as the JSON-RPC response. Each request handler runs in its
+own coroutine, so it may use suspending Amp APIs without blocking the peer.
 
 ```php
-use Fabpot\JsonRpc\RequestResponder;
-
-$dispatcher->onRequest('sum', function (array $params, RequestResponder $responder): void {
-    $responder->resolve(['total' => array_sum($params['values'])]);
+$dispatcher->onRequest('sum', function (array $params): array {
+    return ['total' => array_sum($params['values'])];
 });
+```
 
+A notification handler returns nothing because notifications have no response:
+
+```php
 $dispatcher->onNotification('log', function (array $params): void {
     fwrite(\STDERR, $params['message']."\n");
 });
 ```
 
-Throwing a `JsonRpcException` from a request handler is turned into a JSON-RPC
-error response:
+### Error responses
+
+Throw a `JsonRpcException` to return a JSON-RPC error:
 
 ```php
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcError;
-use Fabpot\JsonRpc\RequestResponder;
 
-$dispatcher->onRequest('divide', function (array $params, RequestResponder $responder): void {
+$dispatcher->onRequest('divide', function (array $params): float|int {
     if (0 === $params['by']) {
         throw new JsonRpcException(JsonRpcError::INVALID_PARAMS, 'Cannot divide by zero.');
     }
 
-    $responder->resolve($params['value'] / $params['by']);
+    return $params['value'] / $params['by'];
 });
 ```
 
-### Deferred responses
+Unexpected exceptions are converted to an internal error without exposing their
+message. Requests for methods without a registered handler receive a
+`METHOD_NOT_FOUND` error.
 
-A handler may keep its responder and resolve it later. The reader keeps
-dispatching inbound messages in the meantime, so a cancellation can arrive and
-settle the same request while its work is still running.
+### Long-running requests and cancellation
+
+The dispatcher creates an Amp `Cancellation` for every inbound request and
+passes it as the optional second argument. A handler that supports cancellation
+passes it to Amp APIs or checks it between units of work:
 
 ```php
-$dispatcher->onRequest('run', function (array $params, RequestResponder $responder) use (&$active): void {
-    $active = $responder;
+use Amp\Cancellation;
+use function Amp\delay;
 
-    \Amp\async(function () use ($responder): void {
-        $result = doLongRunningWork();
-        $responder->resolve($result);
-    });
-});
+function processItems(array $items, Cancellation $cancellation): array
+{
+    $results = [];
 
-$dispatcher->onNotification('cancel', function () use (&$active): void {
-    $active?->resolve(['stopReason' => 'cancelled']);
+    foreach ($items as $item) {
+        $cancellation->throwIfRequested();
+        delay(0.1, cancellation: $cancellation);
+        $results[] = processItem($item);
+    }
+
+    return $results;
+}
+```
+
+Request handlers do not need to create a `Future` or call `Amp\async()`; the
+dispatcher already runs them in a coroutine:
+
+```php
+use Amp\Cancellation;
+use Amp\CancelledException;
+use Fabpot\JsonRpc\Exception\JsonRpcException;
+
+$dispatcher->onRequest('run', function (array $params, Cancellation $cancellation): array {
+    try {
+        return processItems($params['items'], $cancellation);
+    } catch (CancelledException) {
+        throw new JsonRpcException(-32000, 'Request canceled.');
+    }
 });
 ```
 
-A responder settles at most once: a late `resolve()`/`reject()` after a cancel
-is silently ignored.
+JSON-RPC does not define a cancellation notification. Register the convention
+used by your protocol as a normal notification and pass the target request ID
+to `cancelRequest()`:
+
+```php
+$dispatcher->onNotification('cancel', function (array $params) use ($dispatcher): void {
+    $dispatcher->cancelRequest($params['requestId']);
+});
+```
+
+For example, the Language Server Protocol uses a different method and parameter
+name:
+
+```php
+$dispatcher->onNotification('$/cancelRequest', function (array $params) use ($dispatcher): void {
+    $dispatcher->cancelRequest($params['id']);
+});
+```
+
+Cancellation is cooperative. The handler must reach a cancellation check or a
+cancellable suspension before it stops. JSON-RPC also does not define the
+response to a canceled request, so the handler chooses the result or error. In
+the example above, `-32000` is an application-defined error code.
 
 ### Emitting requests and notifications
 

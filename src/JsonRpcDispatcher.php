@@ -11,7 +11,11 @@
 
 namespace Fabpot\JsonRpc;
 
+use Amp\Cancellation;
+use Amp\DeferredCancellation;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
+
+use function Amp\async;
 
 /**
  * Maps JSON-RPC method names to request and notification handlers.
@@ -20,11 +24,14 @@ use Fabpot\JsonRpc\Exception\JsonRpcException;
  */
 final class JsonRpcDispatcher
 {
-    /** @var array<string, callable(array<array-key, mixed>, RequestResponder): void> */
+    /** @var array<string, callable(array<array-key, mixed>, Cancellation): mixed> */
     private array $requestHandlers = [];
 
     /** @var array<string, callable(array<array-key, mixed>): void> */
     private array $notificationHandlers = [];
+
+    /** @var array<string, DeferredCancellation> */
+    private array $activeRequests = [];
 
     public function __construct(
         private readonly JsonRpcPeer $peer,
@@ -33,7 +40,7 @@ final class JsonRpcDispatcher
     }
 
     /**
-     * @param callable(array<array-key, mixed>, RequestResponder): void $handler
+     * @param callable(array<array-key, mixed>, Cancellation): mixed $handler
      */
     public function onRequest(string $method, callable $handler): void
     {
@@ -46,6 +53,11 @@ final class JsonRpcDispatcher
     public function onNotification(string $method, callable $handler): void
     {
         $this->notificationHandlers[$method] = $handler;
+    }
+
+    public function cancelRequest(int|float|string|null $id): void
+    {
+        ($this->activeRequests[$this->requestKey($id)] ?? null)?->cancel();
     }
 
     public function handle(JsonRpcMessage $message, ?RequestResponder $responder = null): void
@@ -70,12 +82,30 @@ final class JsonRpcDispatcher
             return;
         }
 
-        try {
-            $handler($params, $responder);
-        } catch (JsonRpcException $e) {
-            $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
-        } catch (\Throwable) {
-            $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
+        $key = $this->requestKey($message->getId());
+        $deferredCancellation = $this->activeRequests[$key] = new DeferredCancellation();
+
+        async(function () use ($handler, $params, $responder, $key, $deferredCancellation): void {
+            try {
+                $responder->resolve($handler($params, $deferredCancellation->getCancellation()));
+            } catch (JsonRpcException $e) {
+                $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
+            } catch (\Throwable) {
+                $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
+            } finally {
+                if (($this->activeRequests[$key] ?? null) === $deferredCancellation) {
+                    unset($this->activeRequests[$key]);
+                }
+            }
+        })->ignore();
+    }
+
+    private function requestKey(int|float|string|null $id): string
+    {
+        if (\is_float($id) && $id === floor($id) && $id >= \PHP_INT_MIN && $id <= \PHP_INT_MAX) {
+            $id = (int) $id;
         }
+
+        return get_debug_type($id) . ':' . $id;
     }
 }

@@ -2,6 +2,7 @@
 
 ## 1.0.0
 
+- Run inbound request handlers concurrently with return values and cooperative cancellation.
 - Add credential redaction to the PSR-3 traffic logger.
 - Fix JSON-RPC validation, batch isolation, and listener shutdown handling.
 - Add continuous integration for PHP 8.4 and 8.5.

@@ -12,23 +12,25 @@
 namespace Fabpot\JsonRpc\Tests;
 
 use Amp\ByteStream\ReadableBuffer;
-use PHPUnit\Framework\TestCase;
+use Amp\Cancellation;
+use Amp\CancelledException;
+use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
-use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcPeer;
-use Fabpot\JsonRpc\RequestResponder;
+use PHPUnit\Framework\TestCase;
+use Revolt\EventLoop;
+
+use function Amp\delay;
 
 final class JsonRpcDispatcherTest extends TestCase
 {
-    public function testRequestHandlerResolvesResponse(): void
+    public function testRequestHandlerReturnValueBecomesResponse(): void
     {
         $output = $this->drive(
             '{"jsonrpc":"2.0","id":1,"method":"echo","params":{"v":42}}',
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('echo', static function (array $params, RequestResponder $r): void {
-                    $r->resolve(['echoed' => $params['v']]);
-                });
+                $dispatcher->onRequest('echo', static fn(array $params): array => ['echoed' => $params['v']]);
             },
         );
 
@@ -40,9 +42,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             '[{"jsonrpc":"2.0","id":1,"method":"echo","params":{"v":42}}]',
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('echo', static function (array $params, RequestResponder $responder): void {
-                    $responder->resolve($params['v']);
-                });
+                $dispatcher->onRequest('echo', static fn(array $params): mixed => $params['v']);
             },
         );
 
@@ -54,17 +54,17 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             '{"jsonrpc":"2.0","id":5,"method":"boom","params":{}}',
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('boom', static function (): void {
+                $dispatcher->onRequest('boom', static function (): never {
                     throw new JsonRpcException(JsonRpcError::INTERNAL_ERROR, 'nope');
                 });
             },
         );
 
-        $this->assertSame([
+        $this->assertSame([[
             'jsonrpc' => '2.0',
             'id' => 5,
             'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'nope'],
-        ], $output[0]);
+        ]], $output);
     }
 
     public function testUnexpectedExceptionBecomesInternalErrorResponse(): void
@@ -72,7 +72,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             '{"jsonrpc":"2.0","id":5,"method":"boom","params":{}}',
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('boom', static function (): void {
+                $dispatcher->onRequest('boom', static function (): never {
                     throw new \RuntimeException('sensitive details');
                 });
             },
@@ -83,21 +83,6 @@ final class JsonRpcDispatcherTest extends TestCase
             'id' => 5,
             'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error'],
         ]], $output);
-    }
-
-    public function testResponderSettlesOnlyOnce(): void
-    {
-        $output = $this->drive(
-            '{"jsonrpc":"2.0","id":5,"method":"settle","params":{}}',
-            static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('settle', static function (array $params, RequestResponder $responder): void {
-                    $responder->resolve('first');
-                    $responder->reject(JsonRpcError::INTERNAL_ERROR, 'second');
-                });
-            },
-        );
-
-        $this->assertSame([['jsonrpc' => '2.0', 'id' => 5, 'result' => 'first']], $output);
     }
 
     public function testNotificationHandlerProducesNoResponse(): void
@@ -116,6 +101,55 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame(['s1'], $seen);
     }
 
+    public function testRequestHandlersRunConcurrently(): void
+    {
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"slow\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"fast\"}",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('slow', static function (): string {
+                    delay(0.001);
+
+                    return 'slow';
+                });
+                $dispatcher->onRequest('fast', static fn(): string => 'fast');
+            },
+        );
+
+        $this->assertSame([
+            ['jsonrpc' => '2.0', 'id' => 2, 'result' => 'fast'],
+            ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'slow'],
+        ], $output);
+    }
+
+    public function testCancellationNotificationCancelsMatchingRequest(): void
+    {
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"run\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"cancel\",\"params\":{\"requestId\":7}}",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('run', static function (array $params, Cancellation $cancellation): never {
+                    try {
+                        $cancellation->throwIfRequested();
+                    } catch (CancelledException) {
+                        throw new JsonRpcException(-32000, 'Request canceled.');
+                    }
+
+                    throw new \LogicException('The request was not canceled.');
+                });
+                $dispatcher->onNotification('cancel', static function (array $params) use ($dispatcher): void {
+                    /** @var int|float|string|null $requestId */
+                    $requestId = $params['requestId'];
+                    $dispatcher->cancelRequest($requestId);
+                });
+            },
+        );
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => 7,
+            'error' => ['code' => -32000, 'message' => 'Request canceled.'],
+        ]], $output);
+    }
+
     public function testUnknownMethodReturnsMethodNotFound(): void
     {
         $output = $this->drive(
@@ -123,11 +157,11 @@ final class JsonRpcDispatcherTest extends TestCase
             static function (): void {},
         );
 
-        $this->assertSame([
+        $this->assertSame([[
             'jsonrpc' => '2.0',
             'id' => 3,
             'error' => ['code' => JsonRpcError::METHOD_NOT_FOUND, 'message' => 'Method not found: missing'],
-        ], $output[0]);
+        ]], $output);
     }
 
     /**
@@ -135,13 +169,14 @@ final class JsonRpcDispatcherTest extends TestCase
      *
      * @return list<array<array-key, mixed>>
      */
-    private function drive(string $line, callable $configure): array
+    private function drive(string $input, callable $configure): array
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer($line . "\n"), $output);
+        $peer = new JsonRpcPeer(new ReadableBuffer($input), $output);
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();
+        EventLoop::run();
 
         return $output->messages();
     }

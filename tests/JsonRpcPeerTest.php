@@ -63,9 +63,7 @@ final class JsonRpcPeerTest extends TestCase
         $client = new JsonRpcPeer($serverToClient->getSource(), $clientToServer->getSink());
         $server = new JsonRpcPeer($clientToServer->getSource(), $serverToClient->getSink());
         $dispatcher = new JsonRpcDispatcher($server);
-        $dispatcher->onRequest('sum', static function (array $params, RequestResponder $responder): void {
-            $responder->resolve(array_sum($params));
-        });
+        $dispatcher->onRequest('sum', static fn(array $params): int|float => array_sum($params));
 
         $clientListener = async($client->listen(...));
         $serverListener = async($server->listen(...));
@@ -290,9 +288,7 @@ final class JsonRpcPeerTest extends TestCase
             $dispatcher->onNotification('bad', static function (): void {
                 throw new \RuntimeException('Notification failed.');
             });
-            $dispatcher->onRequest('good', static function (array $params, RequestResponder $responder): void {
-                $responder->resolve('ok');
-            });
+            $dispatcher->onRequest('good', static fn(): string => 'ok');
         });
 
         $this->assertSame([[['jsonrpc' => '2.0', 'id' => 1, 'result' => 'ok']]], $output->messages());
@@ -301,12 +297,8 @@ final class JsonRpcPeerTest extends TestCase
     public function testUnencodableBatchResultBecomesInternalErrorWithoutDroppingSiblingResponse(): void
     {
         $output = $this->drivePeer('[{"jsonrpc":"2.0","id":1,"method":"bad"},{"jsonrpc":"2.0","id":2,"method":"good"}]', static function (JsonRpcDispatcher $dispatcher): void {
-            $dispatcher->onRequest('bad', static function (array $params, RequestResponder $responder): void {
-                $responder->resolve(\INF);
-            });
-            $dispatcher->onRequest('good', static function (array $params, RequestResponder $responder): void {
-                $responder->resolve('ok');
-            });
+            $dispatcher->onRequest('bad', static fn(): float => \INF);
+            $dispatcher->onRequest('good', static fn(): string => 'ok');
         });
 
         $this->assertSame([[[
@@ -328,12 +320,8 @@ final class JsonRpcPeerTest extends TestCase
         }
 
         $output = $this->drivePeer('[{"jsonrpc":"2.0","id":1,"method":"deep"},{"jsonrpc":"2.0","id":2,"method":"good"}]', static function (JsonRpcDispatcher $dispatcher) use ($result): void {
-            $dispatcher->onRequest('deep', static function (array $params, RequestResponder $responder) use ($result): void {
-                $responder->resolve($result);
-            });
-            $dispatcher->onRequest('good', static function (array $params, RequestResponder $responder): void {
-                $responder->resolve('ok');
-            });
+            $dispatcher->onRequest('deep', static fn(): array => $result);
+            $dispatcher->onRequest('good', static fn(): string => 'ok');
         });
 
         $this->assertSame([[['jsonrpc' => '2.0', 'id' => 1, 'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error']], ['jsonrpc' => '2.0', 'id' => 2, 'result' => 'ok']]], $output->messages());
@@ -607,6 +595,7 @@ final class JsonRpcPeerTest extends TestCase
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();
+        \Revolt\EventLoop::run();
 
         return $output;
     }
