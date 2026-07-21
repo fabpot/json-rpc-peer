@@ -17,6 +17,7 @@ final class PsrTrafficLogger implements TrafficLoggerInterface
 {
     private const REDACTED = '[redacted]';
     private const REDACTION_FAILED = '[redaction failed]';
+    private const DEFAULT_SENSITIVE_KEYS = ['authorization', 'apiKey', 'api_key', 'accessToken', 'token', 'password', 'secret'];
 
     /** @var array<string, true> */
     private readonly array $sensitiveKeys;
@@ -26,10 +27,10 @@ final class PsrTrafficLogger implements TrafficLoggerInterface
      */
     public function __construct(
         private readonly LoggerInterface $logger,
-        array $sensitiveKeys = ['authorization', 'apiKey', 'api_key', 'accessToken', 'token', 'password', 'secret'],
+        array $sensitiveKeys = [],
     ) {
         $keys = [];
-        foreach ($sensitiveKeys as $key) {
+        foreach ([...self::DEFAULT_SENSITIVE_KEYS, ...$sensitiveKeys] as $key) {
             $keys[strtolower($key)] = true;
         }
         $this->sensitiveKeys = $keys;

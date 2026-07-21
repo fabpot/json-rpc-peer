@@ -181,5 +181,5 @@ use Fabpot\JsonRpc\PsrTrafficLogger;
 $peer = new JsonRpcPeer($input, $output, new PsrTrafficLogger($logger));
 ```
 
-Pass protocol-specific sensitive keys as the second argument when needed.
+Pass additional protocol-specific sensitive keys as the second argument when needed.
 Install `psr/log` to use this optional adapter.

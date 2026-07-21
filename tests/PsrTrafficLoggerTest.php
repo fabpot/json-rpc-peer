@@ -23,13 +23,13 @@ final class PsrTrafficLoggerTest extends TestCase
         $logger = $this->createLogger();
         $trafficLogger = new PsrTrafficLogger($logger, ['authorization', 'customSecret']);
 
-        $trafficLogger->logInbound('{"authorization":"Bearer token","nested":{"customSecret":"secret","url":"https://user:pass@example.com/path"}}');
+        $trafficLogger->logInbound('{"authorization":"Bearer token","nested":{"customSecret":"secret","password":"password","url":"https://user:pass@example.com/path"}}');
         $trafficLogger->logOutbound('{"result":"pong"}');
 
         $this->assertSame([
             [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', [
                 'direction' => 'inbound',
-                'message' => '{"authorization":"[redacted]","nested":{"customSecret":"[redacted]","url":"https://[redacted]@example.com/path"}}',
+                'message' => '{"authorization":"[redacted]","nested":{"customSecret":"[redacted]","password":"[redacted]","url":"https://[redacted]@example.com/path"}}',
             ]],
             [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'outbound', 'message' => '{"result":"pong"}']],
         ], $logger->records);
