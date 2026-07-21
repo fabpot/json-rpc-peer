@@ -16,6 +16,7 @@ use Psr\Log\LoggerInterface;
 final class PsrTrafficLogger implements TrafficLoggerInterface
 {
     private const REDACTED = '[redacted]';
+    private const REDACTION_FAILED = '[redaction failed]';
 
     /** @var array<string, true> */
     private readonly array $sensitiveKeys;
@@ -56,11 +57,11 @@ final class PsrTrafficLogger implements TrafficLoggerInterface
     {
         try {
             $decoded = json_decode($line, true, 512, \JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            return $line;
-        }
 
-        return json_encode($this->redactValue($decoded), \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES) ?: $line;
+            return json_encode($this->redactValue($decoded), \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);
+        } catch (\JsonException) {
+            return self::REDACTION_FAILED;
+        }
     }
 
     private function redactValue(mixed $value): mixed

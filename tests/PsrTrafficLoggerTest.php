@@ -20,7 +20,41 @@ final class PsrTrafficLoggerTest extends TestCase
 {
     public function testLogsRedactedInboundAndOutboundMessages(): void
     {
-        $logger = new class extends AbstractLogger {
+        $logger = $this->createLogger();
+        $trafficLogger = new PsrTrafficLogger($logger, ['authorization', 'customSecret']);
+
+        $trafficLogger->logInbound('{"authorization":"Bearer token","nested":{"customSecret":"secret","url":"https://user:pass@example.com/path"}}');
+        $trafficLogger->logOutbound('{"result":"pong"}');
+
+        $this->assertSame([
+            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', [
+                'direction' => 'inbound',
+                'message' => '{"authorization":"[redacted]","nested":{"customSecret":"[redacted]","url":"https://[redacted]@example.com/path"}}',
+            ]],
+            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'outbound', 'message' => '{"result":"pong"}']],
+        ], $logger->records);
+    }
+
+    public function testDoesNotLogPayloadWhenRedactionFails(): void
+    {
+        $logger = $this->createLogger();
+        $trafficLogger = new PsrTrafficLogger($logger);
+
+        $trafficLogger->logInbound('{"password":"secret","value":1e400}');
+        $trafficLogger->logOutbound('{"password":"secret"');
+
+        $this->assertSame([
+            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'inbound', 'message' => '[redaction failed]']],
+            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'outbound', 'message' => '[redaction failed]']],
+        ], $logger->records);
+    }
+
+    /**
+     * @return AbstractLogger&object{records: list<array{mixed, string, array<string, mixed>}>}
+     */
+    private function createLogger(): AbstractLogger
+    {
+        return new class extends AbstractLogger {
             /** @var list<array{mixed, string, array<string, mixed>}> */
             public array $records = [];
 
@@ -38,17 +72,5 @@ final class PsrTrafficLoggerTest extends TestCase
                 $this->records[] = [$level, (string) $message, $context];
             }
         };
-        $trafficLogger = new PsrTrafficLogger($logger, ['authorization', 'customSecret']);
-
-        $trafficLogger->logInbound('{"authorization":"Bearer token","nested":{"customSecret":"secret","url":"https://user:pass@example.com/path"}}');
-        $trafficLogger->logOutbound('{"result":"pong"}');
-
-        $this->assertSame([
-            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', [
-                'direction' => 'inbound',
-                'message' => '{"authorization":"[redacted]","nested":{"customSecret":"[redacted]","url":"https://[redacted]@example.com/path"}}',
-            ]],
-            [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'outbound', 'message' => '{"result":"pong"}']],
-        ], $logger->records);
     }
 }
