@@ -97,9 +97,6 @@ for active request handlers to finish before returning:
 $peer->listen();
 ```
 
-Malformed lines receive a JSON-RPC `PARSE_ERROR` response and are skipped, so a
-single bad line does not stop the listener.
-
 ### Handling requests and notifications
 
 Register handlers by method name. A request handler returns its result; the
@@ -132,8 +129,9 @@ $dispatcher->onNotification('log', function (array $params): void {
 | `INTERNAL_ERROR` | `-32603` | A request handler fails unexpectedly or its result cannot be encoded. |
 
 The peer emits `PARSE_ERROR`, `INVALID_REQUEST`, and `METHOD_NOT_FOUND`
-automatically. It also converts unexpected exceptions to `INTERNAL_ERROR`
-without exposing their messages.
+automatically. Malformed lines receive a `PARSE_ERROR` response and are skipped,
+so a single bad line does not stop the listener. The peer also converts
+unexpected exceptions to `INTERNAL_ERROR` without exposing their messages.
 
 A request handler can throw `JsonRpcException` with `INVALID_PARAMS` when its
 parameters are valid JSON-RPC but invalid for that method:
