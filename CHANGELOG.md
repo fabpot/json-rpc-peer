@@ -2,6 +2,7 @@
 
 ## 1.0.0
 
+- Fix integer overflow when correlating responses with unsafe numeric IDs.
 - Keep the listener alive when a notification handler throws.
 - Cancel active request handlers when the connection closes.
 - Add concise registration for protocol-specific cancellation notifications.

@@ -48,7 +48,7 @@ final class JsonRpcMessage
             if (!\is_array($data['params'])) {
                 throw new InvalidArgumentException('The params member must be an array or object.');
             }
-            if (self::containsNonFiniteFloat($data['params'])) {
+            if (JsonRpcValues::containsNonFiniteFloat($data['params'])) {
                 throw new InvalidArgumentException('The params member must contain only finite numbers.');
             }
             $params = $data['params'];
@@ -56,7 +56,7 @@ final class JsonRpcMessage
 
         $hasId = \array_key_exists('id', $data);
         $id = $data['id'] ?? null;
-        if ($hasId && !\is_int($id) && !\is_string($id) && null !== $id && (!\is_float($id) || !self::isSafeFloatId($id))) {
+        if ($hasId && !\is_int($id) && !\is_string($id) && null !== $id && (!\is_float($id) || !JsonRpcValues::isSafeFloatId($id))) {
             throw new InvalidArgumentException('The id member must be a safely representable finite number, string, or null.');
         }
         /** @var int|float|string|null $id */
@@ -85,29 +85,5 @@ final class JsonRpcMessage
     public function isNotification(): bool
     {
         return !$this->hasId;
-    }
-
-    private static function isSafeFloatId(float $id): bool
-    {
-        return is_finite($id) && ($id !== floor($id) || ($id >= -9_007_199_254_740_991 && $id <= 9_007_199_254_740_991));
-    }
-
-    private static function containsNonFiniteFloat(mixed $value): bool
-    {
-        if (\is_float($value)) {
-            return !is_finite($value);
-        }
-
-        if (!\is_array($value)) {
-            return false;
-        }
-
-        foreach ($value as $item) {
-            if (self::containsNonFiniteFloat($item)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

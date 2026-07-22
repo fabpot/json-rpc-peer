@@ -69,7 +69,7 @@ final class JsonRpcDispatcher
             }
 
             $id = $params[$idParameter];
-            if (!\is_int($id) && !\is_string($id) && null !== $id && (!\is_float($id) || !$this->isSafeFloatId($id))) {
+            if (!\is_int($id) && !\is_string($id) && null !== $id && (!\is_float($id) || !JsonRpcValues::isSafeFloatId($id))) {
                 return;
             }
 
@@ -127,15 +127,6 @@ final class JsonRpcDispatcher
 
     private function requestKey(int|float|string|null $id): string
     {
-        if (\is_float($id) && $id === floor($id) && $id >= \PHP_INT_MIN && $id <= \PHP_INT_MAX) {
-            $id = (int) $id;
-        }
-
-        return get_debug_type($id) . ':' . $id;
-    }
-
-    private function isSafeFloatId(float $id): bool
-    {
-        return is_finite($id) && ($id !== floor($id) || ($id >= -9_007_199_254_740_991 && $id <= 9_007_199_254_740_991));
+        return JsonRpcValues::requestKey($id);
     }
 }

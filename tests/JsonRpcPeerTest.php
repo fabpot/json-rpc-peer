@@ -298,6 +298,25 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'ok']], $output->messages());
     }
 
+    public function testIgnoresResponseShapedMessageWithUnsafeIntegerId(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('{"jsonrpc":"2.0","id":9223372036854775809}' . "\n"), $output);
+        $handled = false;
+        $peer->onMessage(static function () use (&$handled): void {
+            $handled = true;
+        });
+
+        $peer->listen();
+
+        $this->assertFalse($handled);
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ]], $output->messages());
+    }
+
     public function testBatchNotificationFailureDoesNotPreventSiblingRequest(): void
     {
         $output = $this->drivePeer('[{"jsonrpc":"2.0","method":"bad"},{"jsonrpc":"2.0","id":1,"method":"good"}]', static function (JsonRpcDispatcher $dispatcher): void {
