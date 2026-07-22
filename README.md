@@ -336,7 +336,7 @@ settlement order rather than input order. For example, this inbound batch:
 ]
 ```
 
-It can produce this response if `fast` settles before `slow`:
+can produce this response if `fast` settles before `slow`:
 
 ```json
 [
