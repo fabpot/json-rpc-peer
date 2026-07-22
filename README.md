@@ -155,15 +155,18 @@ $dispatcher->onRequest('divide', function (array $params): float|int {
 
 Handlers may also throw `JsonRpcException` with an application-defined code for
 errors outside the reserved JSON-RPC codes, as shown in the cancellation
-example below.
+example below. At an application boundary, translate domain exceptions to
+`JsonRpcException` in the registered handler rather than coupling application
+services to JSON-RPC error codes.
 
 ### Long-running requests and cancellation
 
 Each request handler runs in its own coroutine, so it may use suspending Amp
 APIs without blocking the peer. The dispatcher creates an Amp `Cancellation`
-for every inbound request and passes it as the optional second argument. A
-handler that supports cancellation passes it to Amp APIs or checks it between
-units of work:
+for every inbound request and passes it as the optional second argument. The
+callable type accepts handlers both with and without this argument, so static
+analysis does not require a wrapper. A handler that supports cancellation
+passes it to Amp APIs or checks it between units of work:
 
 ```php
 use Amp\Cancellation;

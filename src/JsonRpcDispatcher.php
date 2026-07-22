@@ -25,7 +25,7 @@ use function Amp\async;
  */
 final class JsonRpcDispatcher
 {
-    /** @var array<string, callable(array<array-key, mixed>, Cancellation): mixed> */
+    /** @var array<string, callable(array<array-key, mixed>): mixed|callable(array<array-key, mixed>, Cancellation): mixed> */
     private array $requestHandlers = [];
 
     /** @var array<string, callable(array<array-key, mixed>): void> */
@@ -41,7 +41,7 @@ final class JsonRpcDispatcher
     }
 
     /**
-     * @param callable(array<array-key, mixed>, Cancellation): mixed $handler
+     * @param callable(array<array-key, mixed>): mixed|callable(array<array-key, mixed>, Cancellation): mixed $handler
      */
     public function onRequest(string $method, callable $handler): void
     {
