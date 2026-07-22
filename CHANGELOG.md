@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0
+## 0.4.0 - 2026-07-22
 
 - Convert error responses with unencodable data to internal errors.
 - Wrap stream read failures in a package exception.
