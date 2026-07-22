@@ -282,6 +282,22 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame([], $output->messages());
     }
 
+    public function testNotificationHandlerFailureDoesNotStopTheListener(): void
+    {
+        $output = $this->drivePeer(
+            '{"jsonrpc":"2.0","method":"bad"}' . "\n"
+            . '{"jsonrpc":"2.0","id":1,"method":"good"}' . "\n",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onNotification('bad', static function (): void {
+                    throw new \RuntimeException('Notification failed.');
+                });
+                $dispatcher->onRequest('good', static fn(): string => 'ok');
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'ok']], $output->messages());
+    }
+
     public function testBatchNotificationFailureDoesNotPreventSiblingRequest(): void
     {
         $output = $this->drivePeer('[{"jsonrpc":"2.0","method":"bad"},{"jsonrpc":"2.0","id":1,"method":"good"}]', static function (JsonRpcDispatcher $dispatcher): void {

@@ -2,6 +2,7 @@
 
 ## 1.0.0
 
+- Keep the listener alive when a notification handler throws.
 - Cancel active request handlers when the connection closes.
 - Add concise registration for protocol-specific cancellation notifications.
 - Run inbound request handlers concurrently with return values and cooperative cancellation.

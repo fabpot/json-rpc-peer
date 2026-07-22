@@ -323,7 +323,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
             return;
         }
 
-        if ($message->isNotification() && $sender instanceof BatchResponseSender) {
+        if ($message->isNotification()) {
             try {
                 ($this->messageHandler)($message, null);
             } catch (\Throwable) {
