@@ -11,6 +11,12 @@ as the [Language Server
 Protocol](https://microsoft.github.io/language-server-protocol/) and the [Model
 Context Protocol](https://modelcontextprotocol.io).
 
+## Spec conformance
+
+The peer implements JSON-RPC 2.0, including mixed request and notification
+batches. Batch responses are emitted once every request has settled and may be
+ordered by settlement rather than input order, as allowed by the specification.
+
 ## Why this exists
 
 The PHP ecosystem has plenty of JSON-RPC libraries, but they model one HTTP
@@ -43,13 +49,25 @@ use Amp\ByteStream;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcPeer;
 
-$peer = new JsonRpcPeer(
-    ByteStream\getStdin(),
-    ByteStream\getStdout(),
-);
+$input = ByteStream\getStdin();
+$output = ByteStream\getStdout();
 
+$peer = new JsonRpcPeer($input, $output);
 $dispatcher = new JsonRpcDispatcher($peer);
 ```
+
+### Running the peer
+
+After registering the handlers described below, call `listen()`. It reads and
+dispatches messages until the input stream reaches EOF or is closed, then waits
+for active request handlers to finish before returning:
+
+```php
+$peer->listen();
+```
+
+Malformed lines receive a JSON-RPC `PARSE_ERROR` response and are skipped, so a
+single bad line does not stop the listener.
 
 ### Handling requests and notifications
 
@@ -88,9 +106,9 @@ $dispatcher->onRequest('divide', function (array $params): float|int {
 });
 ```
 
-Unexpected exceptions are converted to an internal error without exposing their
-message. Requests for methods without a registered handler receive a
-`METHOD_NOT_FOUND` error.
+Unexpected exceptions receive an `INTERNAL_ERROR` response without exposing
+their message. Requests for methods without a registered handler receive a
+`METHOD_NOT_FOUND` response.
 
 ### Long-running requests and cancellation
 
@@ -133,9 +151,10 @@ $dispatcher->onRequest('run', function (array $params, Cancellation $cancellatio
 });
 ```
 
-JSON-RPC does not define a cancellation notification. Register the convention
-used by your protocol as a normal notification and pass the target request ID
-to `cancelRequest()`:
+JSON-RPC does not define a cancellation notification. Before calling
+`listen()`, register the convention used by your protocol as a normal
+notification. When the remote peer sends this notification while a request is
+running, call `cancelRequest()` with the ID of that inbound request:
 
 ```php
 $dispatcher->onNotification('cancel', function (array $params) use ($dispatcher): void {
@@ -143,8 +162,20 @@ $dispatcher->onNotification('cancel', function (array $params) use ($dispatcher)
 });
 ```
 
-For example, the Language Server Protocol uses a different method and parameter
-name:
+For example, while the handler for this inbound request is running:
+
+```json
+{"jsonrpc":"2.0","id":42,"method":"run","params":{"items":[]}}
+```
+
+The remote peer can then send this notification. The registered notification
+handler calls `cancelRequest(42)`:
+
+```json
+{"jsonrpc":"2.0","method":"cancel","params":{"requestId":42}}
+```
+
+The Language Server Protocol uses a different method and parameter name:
 
 ```php
 $dispatcher->onNotification('$/cancelRequest', function (array $params) use ($dispatcher): void {
@@ -161,16 +192,26 @@ the example above, `-32000` is an application-defined error code.
 
 Outbound requests return an Amp `Future`. Responses are matched by ID, so they
 can arrive in any order. Remote JSON-RPC errors throw a `JsonRpcException` when
-the future is awaited. The listener must be running in another coroutine while
-a request is pending.
+the future is awaited.
+
+`listen()` must process the response while the request is pending, so run it in
+a separate coroutine. Await the listener when shutting down to ensure it has
+stopped:
 
 ```php
 $listener = \Amp\async($peer->listen(...));
-$result = $peer->request('workspace/status', ['workspace' => '/project'])->await();
+
+$result = $peer->request('workspace/status', [
+    'workspace' => '/project',
+])->await();
+
+$input->close();
+$listener->await();
 ```
 
-Close the input stream to stop `listen()`. Closing the input also fails every
-outstanding request with a
+Calling `$input->close()` is the local way to stop `listen()`; an EOF caused by
+the remote side closing its output stops it as well. When the input closes, all
+outstanding outbound requests fail with a
 `Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests throw the
 same exception after the listener stops.
 
@@ -197,22 +238,6 @@ use Fabpot\JsonRpc\BatchRequest;
 $status = $status->await();
 $configuration = $configuration->await();
 ```
-
-### Running the loop
-
-`listen()` reads inbound lines until the stream closes, dispatching each
-message. Malformed lines are answered with a JSON-RPC parse error and skipped,
-so a single bad line never tears down the connection.
-
-```php
-$peer->listen();
-```
-
-## Spec conformance
-
-The peer implements JSON-RPC 2.0, including mixed request and notification
-batches. Batch responses are emitted once every request has settled and may be
-ordered by settlement rather than input order, as allowed by the specification.
 
 ## Traffic logging
 
