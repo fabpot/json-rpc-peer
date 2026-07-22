@@ -88,35 +88,10 @@ final class JsonRpcPeer implements ResponseSenderInterface
                     continue;
                 }
 
-                $this->trafficLogger?->logInbound($line);
-
                 try {
-                    $decoded = json_decode($line, true, 512, \JSON_THROW_ON_ERROR);
-                } catch (\JsonException) {
-                    $this->respondError(null, JsonRpcError::PARSE_ERROR, 'Parse error');
-                    continue;
-                }
-
-                if (!\is_array($decoded)) {
-                    $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
-                    continue;
-                }
-
-                if ('[' === $line[0]) {
-                    if (!array_is_list($decoded)) {
-                        $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
-                        continue;
-                    }
-
-                    $this->handleBatch($decoded);
-                    continue;
-                }
-                /** @var array<string, mixed> $decoded */
-
-                if ($this->isResponse($decoded)) {
-                    $this->handleResponse($decoded);
-                } else {
-                    $this->handleRequest($decoded, $this);
+                    $this->processLine($line);
+                } catch (ConnectionClosedException) {
+                    // the response is undeliverable, keep draining inbound messages
                 }
             }
         } finally {
@@ -128,6 +103,44 @@ final class JsonRpcPeer implements ResponseSenderInterface
                 }
             }
             $this->pendingRequests = [];
+        }
+    }
+
+    private function processLine(string $line): void
+    {
+        $this->trafficLogger?->logInbound($line);
+
+        try {
+            $decoded = json_decode($line, true, 512, \JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            $this->respondError(null, JsonRpcError::PARSE_ERROR, 'Parse error');
+
+            return;
+        }
+
+        if (!\is_array($decoded)) {
+            $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
+
+            return;
+        }
+
+        if ('[' === $line[0]) {
+            if (!array_is_list($decoded)) {
+                $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
+
+                return;
+            }
+
+            $this->handleBatch($decoded);
+
+            return;
+        }
+        /** @var array<string, mixed> $decoded */
+
+        if ($this->isResponse($decoded)) {
+            $this->handleResponse($decoded);
+        } else {
+            $this->handleRequest($decoded, $this);
         }
     }
 

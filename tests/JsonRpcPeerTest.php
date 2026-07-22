@@ -597,6 +597,24 @@ final class JsonRpcPeerTest extends TestCase
         ]], $output->messages());
     }
 
+    public function testClosedOutputDoesNotStopInboundProcessing(): void
+    {
+        $output = new CapturingStream();
+        $output->close();
+        $peer = new JsonRpcPeer(new ReadableBuffer(
+            'not json' . "\n"
+            . '{"jsonrpc":"2.0","method":"note"}' . "\n"
+        ), $output);
+        $seen = [];
+        $peer->onMessage(static function (JsonRpcMessage $message) use (&$seen): void {
+            $seen[] = $message->getMethod();
+        });
+
+        $peer->listen();
+
+        $this->assertSame(['note'], $seen, 'An undeliverable error response must not stop the listener.');
+    }
+
     public function testMalformedLineYieldsParseErrorAndKeepsReading(): void
     {
         $input = new ReadableBuffer(
