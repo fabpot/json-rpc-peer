@@ -185,6 +185,10 @@ function processItems(array $items, Cancellation $cancellation): array
 }
 ```
 
+Cancellation is cooperative: the handler notices a cancellation request when it
+reaches `throwIfRequested()` or suspends in an Amp API that received the
+`Cancellation`.
+
 Request handlers do not need to create a `Future` or call `Amp\async()`; the
 dispatcher already runs them in a coroutine:
 
@@ -201,6 +205,10 @@ $dispatcher->onRequest('run', function (array $params, Cancellation $cancellatio
     }
 });
 ```
+
+JSON-RPC does not define the response to a canceled request, so the handler
+chooses the result or error. Here, `-32000` is an application-defined error
+code.
 
 JSON-RPC does not define a cancellation notification. Before calling
 `listen()`, register the convention used by your protocol as a normal
@@ -254,11 +262,6 @@ sequenceDiagram
     Peer-->>Remote: Error response, id 42
 ```
 
-Cancellation is cooperative. The handler must reach a cancellation check or a
-cancellable suspension before it stops. JSON-RPC also does not define the
-response to a canceled request, so the handler chooses the result or error. In
-the example above, `-32000` is an application-defined error code.
-
 ### Emitting requests and notifications
 
 Outbound requests return an Amp `Future`. Responses are matched by ID, so they
@@ -292,6 +295,8 @@ The peer can also push notifications to the other side at any time:
 $peer->notify('progress', ['percent' => 42]);
 ```
 
+#### Batches
+
 For protocols that use JSON-RPC batches, pass explicit request and notification
 entries. The returned array contains futures for request entries only, in the
 same order as those requests:
@@ -310,23 +315,45 @@ $status = $status->await();
 $configuration = $configuration->await();
 ```
 
-The response to an inbound batch is emitted once every request has settled. Its
-entries may be ordered by settlement rather than input order, as allowed by the
-specification.
+When the peer receives a batch, it sends one response after every request in the
+batch settles. Notifications are omitted, and response entries may follow
+settlement order rather than input order. For example, this inbound batch:
+
+```json
+[
+    {"jsonrpc":"2.0","id":1,"method":"slow"},
+    {"jsonrpc":"2.0","method":"progress"},
+    {"jsonrpc":"2.0","id":2,"method":"fast"}
+]
+```
+
+It can produce this response if `fast` settles before `slow`:
+
+```json
+[
+    {"jsonrpc":"2.0","id":2,"result":"fast"},
+    {"jsonrpc":"2.0","id":1,"result":"slow"}
+]
+```
 
 ## Traffic logging
 
 Pass a `TrafficLoggerInterface` to the peer to record raw inbound and outbound
 lines. `PsrTrafficLogger` forwards them to a PSR-3 logger at the `debug` level
 and recursively redacts common credential keys and credentials in values that
-are URLs:
+are URLs. Pass additional protocol-specific sensitive keys as the second
+argument:
 
 ```php
 use Fabpot\JsonRpc\PsrTrafficLogger;
 
-$peer = new JsonRpcPeer($input, $output, new PsrTrafficLogger($logger));
+$trafficLogger = new PsrTrafficLogger($logger, [
+    'privateKey',
+]);
+$peer = new JsonRpcPeer($input, $output, $trafficLogger);
 ```
 
-Pass additional protocol-specific sensitive keys as the second argument when needed.
-Redaction is intentionally conservative and does not inspect arbitrary text for
-embedded credentials. Install `psr/log` to use this optional adapter.
+The adapter always redacts common credential keys such as `authorization`,
+`token`, `password`, and `secret`. Redaction is intentionally conservative and
+does not inspect arbitrary text for embedded credentials. Install `psr/log` to
+use this optional adapter.
