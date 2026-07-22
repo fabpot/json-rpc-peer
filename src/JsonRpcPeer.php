@@ -12,6 +12,7 @@
 namespace Fabpot\JsonRpc;
 
 use Amp\ByteStream\ReadableStream;
+use Amp\ByteStream\StreamException;
 use Amp\ByteStream\WritableStream;
 use Amp\Cancellation;
 use Amp\DeferredCancellation;
@@ -21,6 +22,7 @@ use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\Exception\RuntimeException;
 
 use function Amp\async;
 use function Amp\ByteStream\splitLines;
@@ -94,6 +96,8 @@ final class JsonRpcPeer implements ResponseSenderInterface
                     // the response is undeliverable, keep draining inbound messages
                 }
             }
+        } catch (StreamException $e) {
+            throw new RuntimeException('Failed to read from the JSON-RPC connection.', 0, $e);
         } finally {
             $this->listenerStopped = true;
             $this->connectionCancellation->cancel();

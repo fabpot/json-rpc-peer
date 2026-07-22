@@ -479,6 +479,28 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertSame('ok', $response->await());
     }
 
+    public function testStreamReadFailureThrowsRuntimeExceptionAndFailsPendingRequests(): void
+    {
+        $input = new FailingReadStream('{"jsonrpc":"2.0","method":"note"}' . "\n");
+        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $seen = 0;
+        $peer->onMessage(static function () use (&$seen): void {
+            ++$seen;
+        });
+        $pending = $peer->request('m');
+
+        try {
+            $peer->listen();
+            $this->fail('The read failure was not raised.');
+        } catch (RuntimeException $e) {
+            $this->assertSame('Failed to read from the JSON-RPC connection.', $e->getMessage());
+        }
+
+        $this->assertSame(1, $seen);
+        $this->expectException(ConnectionClosedException::class);
+        $pending->await();
+    }
+
     public function testStreamWriteFailureThrowsRuntimeException(): void
     {
         $output = new CapturingStream();
