@@ -103,8 +103,7 @@ single bad line does not stop the listener.
 ### Handling requests and notifications
 
 Register handlers by method name. A request handler returns its result; the
-dispatcher sends it as the JSON-RPC response. Each request handler runs in its
-own coroutine, so it may use suspending Amp APIs without blocking the peer.
+dispatcher sends it as the JSON-RPC response.
 
 ```php
 $dispatcher->onRequest('sum', function (array $params): array {
@@ -143,9 +142,11 @@ their message. Requests for methods without a registered handler receive a
 
 ### Long-running requests and cancellation
 
-The dispatcher creates an Amp `Cancellation` for every inbound request and
-passes it as the optional second argument. A handler that supports cancellation
-passes it to Amp APIs or checks it between units of work:
+Each request handler runs in its own coroutine, so it may use suspending Amp
+APIs without blocking the peer. The dispatcher creates an Amp `Cancellation`
+for every inbound request and passes it as the optional second argument. A
+handler that supports cancellation passes it to Amp APIs or checks it between
+units of work:
 
 ```php
 use Amp\Cancellation;
