@@ -121,13 +121,32 @@ $dispatcher->onNotification('log', function (array $params): void {
 
 ### Error responses
 
-Throw a `JsonRpcException` to return a JSON-RPC error:
+`JsonRpcError` defines all error codes reserved by JSON-RPC 2.0:
+
+| Constant | Code | When it is used |
+| --- | ---: | --- |
+| `PARSE_ERROR` | `-32700` | The peer received malformed JSON. |
+| `INVALID_REQUEST` | `-32600` | The decoded message is not a valid JSON-RPC request. |
+| `METHOD_NOT_FOUND` | `-32601` | No request handler is registered for the method. |
+| `INVALID_PARAMS` | `-32602` | A request handler rejects its method parameters. |
+| `INTERNAL_ERROR` | `-32603` | A request handler fails unexpectedly or its result cannot be encoded. |
+
+The peer emits `PARSE_ERROR`, `INVALID_REQUEST`, and `METHOD_NOT_FOUND`
+automatically. It also converts unexpected exceptions to `INTERNAL_ERROR`
+without exposing their messages.
+
+A request handler can throw `JsonRpcException` with `INVALID_PARAMS` when its
+parameters are valid JSON-RPC but invalid for that method:
 
 ```php
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcError;
 
 $dispatcher->onRequest('divide', function (array $params): float|int {
+    if (!is_int($params['value'] ?? null) || !is_int($params['by'] ?? null)) {
+        throw new JsonRpcException(JsonRpcError::INVALID_PARAMS, 'Expected integer "value" and "by" parameters.');
+    }
+
     if (0 === $params['by']) {
         throw new JsonRpcException(JsonRpcError::INVALID_PARAMS, 'Cannot divide by zero.');
     }
@@ -136,9 +155,9 @@ $dispatcher->onRequest('divide', function (array $params): float|int {
 });
 ```
 
-Unexpected exceptions receive an `INTERNAL_ERROR` response without exposing
-their message. Requests for methods without a registered handler receive a
-`METHOD_NOT_FOUND` response.
+Handlers may also throw `JsonRpcException` with an application-defined code for
+errors outside the reserved JSON-RPC codes, as shown in the cancellation
+example below.
 
 ### Long-running requests and cancellation
 
