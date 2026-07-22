@@ -2,6 +2,7 @@
 
 ## 1.0.0
 
+- Discard undeliverable responses when the connection closes mid-request.
 - Fix integer overflow when correlating responses with unsafe numeric IDs.
 - Keep the listener alive when a notification handler throws.
 - Cancel active request handlers when the connection closes.

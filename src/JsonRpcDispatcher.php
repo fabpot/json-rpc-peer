@@ -14,6 +14,7 @@ namespace Fabpot\JsonRpc;
 use Amp\Cancellation;
 use Amp\DeferredCancellation;
 use Amp\Future;
+use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 
 use function Amp\async;
@@ -112,11 +113,15 @@ final class JsonRpcDispatcher
 
         return async(function () use ($handler, $params, $responder, $key, $deferredCancellation): void {
             try {
-                $responder->resolve($handler($params, $deferredCancellation->getCancellation()));
-            } catch (JsonRpcException $e) {
-                $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
-            } catch (\Throwable) {
-                $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
+                try {
+                    $responder->resolve($handler($params, $deferredCancellation->getCancellation()));
+                } catch (JsonRpcException $e) {
+                    $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
+                } catch (\Throwable) {
+                    $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
+                }
+            } catch (ConnectionClosedException) {
+                // the response is undeliverable, the remote peer is gone
             } finally {
                 if (($this->activeRequests[$key] ?? null) === $deferredCancellation) {
                     unset($this->activeRequests[$key]);
