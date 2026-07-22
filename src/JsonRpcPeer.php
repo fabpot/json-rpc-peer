@@ -20,6 +20,7 @@ use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 
+use function Amp\async;
 use function Amp\ByteStream\splitLines;
 
 /**
@@ -29,7 +30,7 @@ use function Amp\ByteStream\splitLines;
  */
 final class JsonRpcPeer implements ResponseSenderInterface
 {
-    /** @var (callable(JsonRpcMessage, RequestResponder|null): void)|null */
+    /** @var (callable(JsonRpcMessage, RequestResponder|null): mixed)|null */
     private $messageHandler;
 
     private readonly JsonRpcWriter $writer;
@@ -38,6 +39,9 @@ final class JsonRpcPeer implements ResponseSenderInterface
 
     /** @var array<string, DeferredFuture<mixed>> */
     private array $pendingRequests = [];
+
+    /** @var array<string, Future<mixed>> */
+    private array $inboundRequests = [];
 
     public function __construct(
         private readonly ReadableStream $input,
@@ -48,7 +52,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
     }
 
     /**
-     * @param callable(JsonRpcMessage, RequestResponder|null): void $handler
+     * @param callable(JsonRpcMessage, RequestResponder|null): mixed $handler
      */
     public function onMessage(callable $handler): void
     {
@@ -56,6 +60,17 @@ final class JsonRpcPeer implements ResponseSenderInterface
     }
 
     public function listen(): void
+    {
+        async($this->listenLoop(...))->await();
+
+        while ($this->inboundRequests) {
+            foreach ($this->inboundRequests as $future) {
+                $future->await();
+            }
+        }
+    }
+
+    private function listenLoop(): void
     {
         try {
             foreach (splitLines($this->input) as $line) {
@@ -307,7 +322,14 @@ final class JsonRpcPeer implements ResponseSenderInterface
             return;
         }
 
-        ($this->messageHandler)($message, $responder);
+        $result = ($this->messageHandler)($message, $responder);
+        if ($result instanceof Future) {
+            $key = spl_object_hash($result);
+            $this->inboundRequests[$key] = $result;
+            $result->finally(function () use ($key): void {
+                unset($this->inboundRequests[$key]);
+            })->ignore();
+        }
     }
 
     /**

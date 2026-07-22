@@ -13,6 +13,7 @@ namespace Fabpot\JsonRpc;
 
 use Amp\Cancellation;
 use Amp\DeferredCancellation;
+use Amp\Future;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 
 use function Amp\async;
@@ -60,7 +61,10 @@ final class JsonRpcDispatcher
         ($this->activeRequests[$this->requestKey($id)] ?? null)?->cancel();
     }
 
-    public function handle(JsonRpcMessage $message, ?RequestResponder $responder = null): void
+    /**
+     * @return Future<mixed>|null
+     */
+    public function handle(JsonRpcMessage $message, ?RequestResponder $responder = null): ?Future
     {
         $method = $message->getMethod();
         $params = $message->getParams();
@@ -71,7 +75,7 @@ final class JsonRpcDispatcher
                 $handler($params);
             }
 
-            return;
+            return null;
         }
 
         $responder ??= new RequestResponder($this->peer, $message->getId());
@@ -79,13 +83,13 @@ final class JsonRpcDispatcher
         if (null === $handler) {
             $responder->reject(JsonRpcError::METHOD_NOT_FOUND, \sprintf('Method not found: %s', $method));
 
-            return;
+            return null;
         }
 
         $key = $this->requestKey($message->getId());
         $deferredCancellation = $this->activeRequests[$key] = new DeferredCancellation();
 
-        async(function () use ($handler, $params, $responder, $key, $deferredCancellation): void {
+        return async(function () use ($handler, $params, $responder, $key, $deferredCancellation): void {
             try {
                 $responder->resolve($handler($params, $deferredCancellation->getCancellation()));
             } catch (JsonRpcException $e) {
@@ -97,7 +101,7 @@ final class JsonRpcDispatcher
                     unset($this->activeRequests[$key]);
                 }
             }
-        })->ignore();
+        });
     }
 
     private function requestKey(int|float|string|null $id): string

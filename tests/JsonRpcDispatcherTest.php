@@ -19,7 +19,6 @@ use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
 use Fabpot\JsonRpc\JsonRpcPeer;
 use PHPUnit\Framework\TestCase;
-use Revolt\EventLoop;
 
 use function Amp\delay;
 
@@ -35,6 +34,18 @@ final class JsonRpcDispatcherTest extends TestCase
         );
 
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => ['echoed' => 42]]], $output);
+    }
+
+    public function testListenWaitsForRequestHandlers(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"echo"}'), $output);
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('echo', static fn(): string => 'done');
+
+        $peer->listen();
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'done']], $output->messages());
     }
 
     public function testOneElementBatchReturnsResponseArray(): void
@@ -176,7 +187,6 @@ final class JsonRpcDispatcherTest extends TestCase
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();
-        EventLoop::run();
 
         return $output->messages();
     }

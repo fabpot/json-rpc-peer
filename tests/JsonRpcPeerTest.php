@@ -595,7 +595,6 @@ final class JsonRpcPeerTest extends TestCase
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();
-        \Revolt\EventLoop::run();
 
         return $output;
     }
