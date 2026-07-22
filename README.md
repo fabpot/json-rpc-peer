@@ -11,6 +11,38 @@ as the [Language Server
 Protocol](https://microsoft.github.io/language-server-protocol/) and the [Model
 Context Protocol](https://modelcontextprotocol.io).
 
+```mermaid
+sequenceDiagram
+    participant A as Application A
+    participant PA as JsonRpcPeer A
+    participant PB as JsonRpcPeer B
+    participant B as Application B
+
+    Note over PA,PB: One persistent duplex connection
+
+    par Application A calls Application B
+        A->>PA: request("sum", params)
+        PA->>PB: Request, id 1
+        PB->>B: onRequest("sum")
+        B-->>PB: return result
+        PB-->>PA: Response, id 1
+        PA-->>A: Future resolves
+    and Application B calls Application A
+        B->>PB: request("status", params)
+        PB->>PA: Request, id 7
+        PA->>A: onRequest("status")
+        A-->>PA: return result
+        PA-->>PB: Response, id 7
+        PB-->>B: Future resolves
+    end
+
+    B->>PB: notify("progress", params)
+    PB->>PA: Notification
+    PA->>A: onNotification("progress")
+
+    Note over PA,PB: Requests can overlap and responses can arrive out of order
+```
+
 ## Spec conformance
 
 The peer implements JSON-RPC 2.0, including mixed request and notification
