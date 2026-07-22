@@ -87,16 +87,6 @@ $peer = new JsonRpcPeer($input, $output);
 $dispatcher = new JsonRpcDispatcher($peer);
 ```
 
-### Running the peer
-
-After registering the handlers described below, call `listen()`. It reads and
-dispatches messages until the input stream reaches EOF or is closed, then waits
-for active request handlers to finish before returning:
-
-```php
-$peer->listen();
-```
-
 ### Handling requests and notifications
 
 Register handlers by method name. A request handler returns its result; the
@@ -114,6 +104,16 @@ A notification handler returns nothing because notifications have no response:
 $dispatcher->onNotification('log', function (array $params): void {
     fwrite(\STDERR, $params['message']."\n");
 });
+```
+
+### Running the peer
+
+After registering handlers, call `listen()`. It reads and dispatches messages
+until the input stream reaches EOF or is closed, then waits for active request
+handlers to finish before returning:
+
+```php
+$peer->listen();
 ```
 
 ### Error responses
