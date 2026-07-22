@@ -2,6 +2,7 @@
 
 ## 1.0.0
 
+- Convert error responses with unencodable data to internal errors.
 - Wrap stream read failures in a package exception.
 - Keep processing inbound messages when an automatic error response is undeliverable.
 - Track concurrent requests sharing an ID so shutdown cancels every active handler.

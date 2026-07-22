@@ -171,6 +171,24 @@ final class JsonRpcDispatcherTest extends TestCase
         ]], $output);
     }
 
+    public function testJsonRpcExceptionWithUnencodableDataBecomesInternalErrorResponse(): void
+    {
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","id":5,"method":"boom","params":{}}',
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('boom', static function (): never {
+                    throw new JsonRpcException(-32000, 'app error', ['value' => \INF]);
+                });
+            },
+        );
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error'],
+        ]], $output);
+    }
+
     public function testUnexpectedExceptionBecomesInternalErrorResponse(): void
     {
         $output = $this->drive(

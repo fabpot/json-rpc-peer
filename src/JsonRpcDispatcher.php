@@ -15,6 +15,7 @@ use Amp\Cancellation;
 use Amp\DeferredCancellation;
 use Amp\Future;
 use Fabpot\JsonRpc\Exception\ConnectionClosedException;
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 
 use function Amp\async;
@@ -121,7 +122,11 @@ final class JsonRpcDispatcher
                 try {
                     $responder->resolve($handler($params, $deferredCancellation->getCancellation()));
                 } catch (JsonRpcException $e) {
-                    $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
+                    try {
+                        $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
+                    } catch (InvalidArgumentException) {
+                        $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
+                    }
                 } catch (\Throwable) {
                     $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
                 }
