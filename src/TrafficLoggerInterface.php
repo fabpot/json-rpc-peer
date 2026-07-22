@@ -16,6 +16,9 @@ namespace Fabpot\JsonRpc;
  *
  * Payloads may contain secrets; implementations must arrange appropriate redaction before persistence.
  *
+ * Implementations must not throw: an exception from a logging call propagates to the peer and aborts
+ * the affected operation.
+ *
  * @author Fabien Potencier <fabien@symfony.com>
  */
 interface TrafficLoggerInterface
