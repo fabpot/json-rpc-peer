@@ -46,8 +46,7 @@ sequenceDiagram
 ## Spec conformance
 
 The peer implements JSON-RPC 2.0, including mixed request and notification
-batches. Batch responses are emitted once every request has settled and may be
-ordered by settlement rather than input order, as allowed by the specification.
+batches.
 
 ## Why this exists
 
@@ -215,6 +214,26 @@ $dispatcher->onNotification('$/cancelRequest', function (array $params) use ($di
 });
 ```
 
+```mermaid
+sequenceDiagram
+    participant Remote as Remote peer
+    participant Peer as JsonRpcPeer
+    participant Dispatcher as JsonRpcDispatcher
+    participant Handler as Request handler
+
+    Remote->>Peer: Request, id 42
+    Peer->>Dispatcher: Dispatch request
+    Dispatcher->>Handler: Handle with Cancellation
+    Handler-->>Handler: Suspend on cancellable work
+    Remote->>Peer: Cancellation notification, id 42
+    Peer->>Dispatcher: Dispatch notification
+    Dispatcher->>Dispatcher: cancelRequest(42)
+    Dispatcher-->>Handler: Cancellation requested
+    Handler-->>Dispatcher: Throw protocol-specific JsonRpcException
+    Dispatcher-->>Peer: Error response, id 42
+    Peer-->>Remote: Error response, id 42
+```
+
 Cancellation is cooperative. The handler must reach a cancellation check or a
 cancellable suspension before it stops. JSON-RPC also does not define the
 response to a canceled request, so the handler chooses the result or error. In
@@ -270,6 +289,10 @@ use Fabpot\JsonRpc\BatchRequest;
 $status = $status->await();
 $configuration = $configuration->await();
 ```
+
+The response to an inbound batch is emitted once every request has settled. Its
+entries may be ordered by settlement rather than input order, as allowed by the
+specification.
 
 ## Traffic logging
 
