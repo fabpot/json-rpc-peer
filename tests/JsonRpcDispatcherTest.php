@@ -48,6 +48,26 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'done']], $output->messages());
     }
 
+    public function testConnectionClosureCancelsActiveRequestHandlers(): void
+    {
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","id":1,"method":"wait"}',
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation): string {
+                    try {
+                        delay(10, cancellation: $cancellation);
+                    } catch (CancelledException) {
+                        return 'canceled';
+                    }
+
+                    return 'completed';
+                });
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled']], $output);
+    }
+
     public function testOneElementBatchReturnsResponseArray(): void
     {
         $output = $this->drive(

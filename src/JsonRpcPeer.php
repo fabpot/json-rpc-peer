@@ -13,6 +13,8 @@ namespace Fabpot\JsonRpc;
 
 use Amp\ByteStream\ReadableStream;
 use Amp\ByteStream\WritableStream;
+use Amp\Cancellation;
+use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
 use Amp\Future;
 use Fabpot\JsonRpc\Exception\ConnectionClosedException;
@@ -34,6 +36,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
     private $messageHandler;
 
     private readonly JsonRpcWriter $writer;
+    private readonly DeferredCancellation $connectionCancellation;
     private int $nextRequestId = 1;
     private bool $listenerStopped = false;
 
@@ -49,6 +52,12 @@ final class JsonRpcPeer implements ResponseSenderInterface
         private readonly ?TrafficLoggerInterface $trafficLogger = null,
     ) {
         $this->writer = new JsonRpcWriter($output, $trafficLogger);
+        $this->connectionCancellation = new DeferredCancellation();
+    }
+
+    public function getConnectionCancellation(): Cancellation
+    {
+        return $this->connectionCancellation->getCancellation();
     }
 
     /**
@@ -112,6 +121,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
             }
         } finally {
             $this->listenerStopped = true;
+            $this->connectionCancellation->cancel();
             foreach ($this->pendingRequests as $deferred) {
                 if (!$deferred->isComplete()) {
                     $deferred->error(new ConnectionClosedException('The JSON-RPC connection closed before a response was received.'));

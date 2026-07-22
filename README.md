@@ -109,8 +109,8 @@ $dispatcher->onNotification('log', function (array $params): void {
 ### Running the peer
 
 After registering handlers, call `listen()`. It reads and dispatches messages
-until the input stream reaches EOF or is closed, then waits for active request
-handlers to finish before returning:
+until the input stream reaches EOF or is closed. It then requests cancellation
+of active request handlers and waits for them to finish before returning:
 
 ```php
 $peer->listen();
@@ -164,8 +164,9 @@ services to JSON-RPC error codes.
 Each request handler runs in its own coroutine, so it may use suspending Amp
 APIs without blocking the peer. The dispatcher creates an Amp `Cancellation`
 for every inbound request and passes it as the optional second argument. The
-callable type accepts handlers both with and without this argument, so static
-analysis does not require a wrapper. A handler that supports cancellation
+callable type accepts user-defined handlers both with and without this argument,
+so static analysis does not require a wrapper. Internally implemented PHP
+callables must accept both arguments. A handler that supports cancellation
 passes it to Amp APIs or checks it between units of work:
 
 ```php
@@ -188,7 +189,8 @@ function processItems(array $items, Cancellation $cancellation): array
 
 Cancellation is cooperative: the handler notices a cancellation request when it
 reaches `throwIfRequested()` or suspends in an Amp API that received the
-`Cancellation`.
+`Cancellation`. The dispatcher also requests cancellation of every active
+handler when the input stream closes.
 
 Request handlers do not need to create a `Future` or call `Amp\async()`; the
 dispatcher already runs them in a coroutine:

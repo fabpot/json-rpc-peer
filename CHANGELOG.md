@@ -2,6 +2,7 @@
 
 ## 1.0.0
 
+- Cancel active request handlers when the connection closes.
 - Add concise registration for protocol-specific cancellation notifications.
 - Run inbound request handlers concurrently with return values and cooperative cancellation.
 - Add credential redaction to the PSR-3 traffic logger.

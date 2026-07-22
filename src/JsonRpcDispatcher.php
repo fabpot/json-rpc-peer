@@ -38,6 +38,11 @@ final class JsonRpcDispatcher
         private readonly JsonRpcPeer $peer,
     ) {
         $peer->onMessage($this->handle(...));
+        $peer->getConnectionCancellation()->subscribe(function (): void {
+            foreach ($this->activeRequests as $request) {
+                $request->cancel();
+            }
+        });
     }
 
     /**
