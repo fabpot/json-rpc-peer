@@ -208,15 +208,13 @@ JSON-RPC does not define the response to a canceled request, so the handler
 chooses the result or error. Here, `-32000` is an application-defined error
 code.
 
-JSON-RPC does not define a cancellation notification. Before calling
-`listen()`, register the convention used by your protocol as a normal
-notification. When the remote peer sends this notification while a request is
-running, call `cancelRequest()` with the ID of that inbound request:
+JSON-RPC does not define a cancellation notification or its parameters. Before
+calling `listen()`, register the convention used by your protocol with
+`onCancel()`. Pass both the notification method and the parameter containing the
+ID of the inbound request to cancel:
 
 ```php
-$dispatcher->onNotification('cancel', function (array $params) use ($dispatcher): void {
-    $dispatcher->cancelRequest($params['requestId']);
-});
+$dispatcher->onCancel('cancel', 'requestId');
 ```
 
 For example, while the handler for this inbound request is running:
@@ -232,11 +230,19 @@ handler calls `cancelRequest(42)`:
 {"jsonrpc":"2.0","method":"cancel","params":{"requestId":42}}
 ```
 
-The Language Server Protocol uses a different method and parameter name:
+The Language Server Protocol uses a different notification method and names the
+ID parameter `id`:
 
 ```php
-$dispatcher->onNotification('$/cancelRequest', function (array $params) use ($dispatcher): void {
-    $dispatcher->cancelRequest($params['id']);
+$dispatcher->onCancel('$/cancelRequest', 'id');
+```
+
+For a cancellation payload that cannot be described by a top-level parameter,
+use `onNotification()` and `cancelRequest()` directly:
+
+```php
+$dispatcher->onNotification('custom/cancel', function (array $params) use ($dispatcher): void {
+    $dispatcher->cancelRequest($params['request']['id']);
 });
 ```
 
@@ -253,7 +259,7 @@ sequenceDiagram
     Handler-->>Handler: Suspend on cancellable work
     Remote->>Peer: Cancellation notification, id 42
     Peer->>Dispatcher: Dispatch notification
-    Dispatcher->>Dispatcher: cancelRequest(42)
+    Dispatcher->>Dispatcher: onCancel extracts id and cancels request 42
     Dispatcher-->>Handler: Cancellation requested
     Handler-->>Dispatcher: Throw protocol-specific JsonRpcException
     Dispatcher-->>Peer: Error response, id 42

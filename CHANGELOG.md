@@ -2,6 +2,7 @@
 
 ## 1.0.0
 
+- Add concise registration for protocol-specific cancellation notifications.
 - Run inbound request handlers concurrently with return values and cooperative cancellation.
 - Add credential redaction to the PSR-3 traffic logger.
 - Fix JSON-RPC validation, batch isolation, and listener shutdown handling.

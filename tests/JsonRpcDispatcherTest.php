@@ -146,11 +146,7 @@ final class JsonRpcDispatcherTest extends TestCase
 
                     throw new \LogicException('The request was not canceled.');
                 });
-                $dispatcher->onNotification('cancel', static function (array $params) use ($dispatcher): void {
-                    /** @var int|float|string|null $requestId */
-                    $requestId = $params['requestId'];
-                    $dispatcher->cancelRequest($requestId);
-                });
+                $dispatcher->onCancel('cancel', 'requestId');
             },
         );
 
@@ -159,6 +155,48 @@ final class JsonRpcDispatcherTest extends TestCase
             'id' => 7,
             'error' => ['code' => -32000, 'message' => 'Request canceled.'],
         ]], $output);
+    }
+
+    public function testCancellationNotificationUsesConfiguredIdParameter(): void
+    {
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"run\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":9}}",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('run', static function (array $params, Cancellation $cancellation): never {
+                    try {
+                        $cancellation->throwIfRequested();
+                    } catch (CancelledException) {
+                        throw new JsonRpcException(-32001, 'LSP request canceled.');
+                    }
+
+                    throw new \LogicException('The request was not canceled.');
+                });
+                $dispatcher->onCancel('$/cancelRequest', 'id');
+            },
+        );
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => 9,
+            'error' => ['code' => -32001, 'message' => 'LSP request canceled.'],
+        ]], $output);
+    }
+
+    public function testInvalidCancellationIdDoesNotCancelRequest(): void
+    {
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"run\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"cancel\",\"params\":{\"requestId\":{}}}",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('run', static function (array $params, Cancellation $cancellation): string {
+                    $cancellation->throwIfRequested();
+
+                    return 'completed';
+                });
+                $dispatcher->onCancel('cancel', 'requestId');
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 11, 'result' => 'completed']], $output);
     }
 
     public function testUnknownMethodReturnsMethodNotFound(): void

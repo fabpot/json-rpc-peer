@@ -56,6 +56,22 @@ final class JsonRpcDispatcher
         $this->notificationHandlers[$method] = $handler;
     }
 
+    public function onCancel(string $method, string $idParameter): void
+    {
+        $this->onNotification($method, function (array $params) use ($idParameter): void {
+            if (!\array_key_exists($idParameter, $params)) {
+                return;
+            }
+
+            $id = $params[$idParameter];
+            if (!\is_int($id) && !\is_string($id) && null !== $id && (!\is_float($id) || !$this->isSafeFloatId($id))) {
+                return;
+            }
+
+            $this->cancelRequest($id);
+        });
+    }
+
     public function cancelRequest(int|float|string|null $id): void
     {
         ($this->activeRequests[$this->requestKey($id)] ?? null)?->cancel();
@@ -111,5 +127,10 @@ final class JsonRpcDispatcher
         }
 
         return get_debug_type($id) . ':' . $id;
+    }
+
+    private function isSafeFloatId(float $id): bool
+    {
+        return is_finite($id) && ($id !== floor($id) || ($id >= -9_007_199_254_740_991 && $id <= 9_007_199_254_740_991));
     }
 }
