@@ -32,7 +32,7 @@ final class JsonRpcDispatcher
     /** @var array<string, callable(array<array-key, mixed>): void> */
     private array $notificationHandlers = [];
 
-    /** @var array<string, DeferredCancellation> */
+    /** @var array<string, array<int, DeferredCancellation>> */
     private array $activeRequests = [];
 
     public function __construct(
@@ -40,8 +40,10 @@ final class JsonRpcDispatcher
     ) {
         $peer->onMessage($this->handle(...));
         $peer->getConnectionCancellation()->subscribe(function (): void {
-            foreach ($this->activeRequests as $request) {
-                $request->cancel();
+            foreach ($this->activeRequests as $requests) {
+                foreach ($requests as $request) {
+                    $request->cancel();
+                }
             }
         });
     }
@@ -80,7 +82,9 @@ final class JsonRpcDispatcher
 
     public function cancelRequest(int|float|string|null $id): void
     {
-        ($this->activeRequests[$this->requestKey($id)] ?? null)?->cancel();
+        foreach ($this->activeRequests[$this->requestKey($id)] ?? [] as $request) {
+            $request->cancel();
+        }
     }
 
     /**
@@ -109,7 +113,8 @@ final class JsonRpcDispatcher
         }
 
         $key = $this->requestKey($message->getId());
-        $deferredCancellation = $this->activeRequests[$key] = new DeferredCancellation();
+        $deferredCancellation = new DeferredCancellation();
+        $this->activeRequests[$key][spl_object_id($deferredCancellation)] = $deferredCancellation;
 
         return async(function () use ($handler, $params, $responder, $key, $deferredCancellation): void {
             try {
@@ -123,7 +128,8 @@ final class JsonRpcDispatcher
             } catch (ConnectionClosedException) {
                 // the response is undeliverable, the remote peer is gone
             } finally {
-                if (($this->activeRequests[$key] ?? null) === $deferredCancellation) {
+                unset($this->activeRequests[$key][spl_object_id($deferredCancellation)]);
+                if (!($this->activeRequests[$key] ?? [])) {
                     unset($this->activeRequests[$key]);
                 }
             }

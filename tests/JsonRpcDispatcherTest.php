@@ -68,6 +68,57 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled']], $output);
     }
 
+    public function testConnectionClosureCancelsConcurrentRequestsSharingAnId(): void
+    {
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $count = 0;
+                $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use (&$count): string {
+                    $call = ++$count;
+                    try {
+                        delay(10, cancellation: $cancellation);
+                    } catch (CancelledException) {
+                        return "canceled-{$call}";
+                    }
+
+                    return "completed-{$call}";
+                });
+            },
+        );
+
+        $this->assertSame([
+            ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled-1'],
+            ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled-2'],
+        ], $output);
+    }
+
+    public function testCancellationNotificationCancelsAllRequestsSharingAnId(): void
+    {
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"cancel\",\"params\":{\"requestId\":1}}",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $count = 0;
+                $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use (&$count): string {
+                    $call = ++$count;
+                    try {
+                        delay(10, cancellation: $cancellation);
+                    } catch (CancelledException) {
+                        return "canceled-{$call}";
+                    }
+
+                    return "completed-{$call}";
+                });
+                $dispatcher->onCancel('cancel', 'requestId');
+            },
+        );
+
+        $this->assertSame([
+            ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled-1'],
+            ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled-2'],
+        ], $output);
+    }
+
     public function testHandlerRespondingAfterTheConnectionClosedDoesNotFailTheListener(): void
     {
         $output = new CapturingStream();
