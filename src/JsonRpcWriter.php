@@ -11,18 +11,13 @@
 
 namespace Fabpot\JsonRpc;
 
-use Amp\ByteStream\ClosedException;
-use Amp\ByteStream\StreamException;
-use Amp\ByteStream\WritableStream;
-use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
-use Fabpot\JsonRpc\Exception\RuntimeException;
 
 /** @internal */
 final class JsonRpcWriter
 {
     public function __construct(
-        private readonly WritableStream $output,
+        private readonly JsonRpcTransportInterface $transport,
         private readonly ?TrafficLoggerInterface $trafficLogger,
     ) {}
 
@@ -34,13 +29,7 @@ final class JsonRpcWriter
         $line = $this->encode($payload);
         $this->trafficLogger?->logOutbound($line);
 
-        try {
-            $this->output->write($line . "\n");
-        } catch (ClosedException $e) {
-            throw new ConnectionClosedException('The JSON-RPC connection is closed.', 0, $e);
-        } catch (StreamException $e) {
-            throw new RuntimeException('Failed to write to the JSON-RPC connection.', 0, $e);
-        }
+        $this->transport->send($line);
     }
 
     /**

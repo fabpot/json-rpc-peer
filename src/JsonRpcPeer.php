@@ -11,9 +11,6 @@
 
 namespace Fabpot\JsonRpc;
 
-use Amp\ByteStream\ReadableStream;
-use Amp\ByteStream\StreamException;
-use Amp\ByteStream\WritableStream;
 use Amp\Cancellation;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
@@ -22,13 +19,11 @@ use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
-use Fabpot\JsonRpc\Exception\RuntimeException;
 
 use function Amp\async;
-use function Amp\ByteStream\splitLines;
 
 /**
- * Minimal bidirectional JSON-RPC 2.0 peer over line-delimited JSON streams.
+ * Minimal bidirectional JSON-RPC 2.0 peer.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
@@ -41,6 +36,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
     private readonly DeferredCancellation $connectionCancellation;
     private int $nextRequestId = 1;
     private bool $listenerStopped = false;
+    private bool $transportClosed = false;
 
     /** @var array<string, DeferredFuture<mixed>> */
     private array $pendingRequests = [];
@@ -49,11 +45,10 @@ final class JsonRpcPeer implements ResponseSenderInterface
     private array $inboundRequests = [];
 
     public function __construct(
-        private readonly ReadableStream $input,
-        WritableStream $output,
+        private readonly JsonRpcTransportInterface $transport,
         private readonly ?TrafficLoggerInterface $trafficLogger = null,
     ) {
-        $this->writer = new JsonRpcWriter($output, $trafficLogger);
+        $this->writer = new JsonRpcWriter($transport, $trafficLogger);
         $this->connectionCancellation = new DeferredCancellation();
     }
 
@@ -81,41 +76,58 @@ final class JsonRpcPeer implements ResponseSenderInterface
         }
     }
 
+    public function close(): void
+    {
+        if (!$this->transportClosed) {
+            $this->transportClosed = true;
+            $this->transport->close();
+        }
+
+        $this->stop();
+    }
+
     private function listenLoop(): void
     {
         try {
-            foreach (splitLines($this->input) as $line) {
-                $line = trim($line, " \t\r\n");
-                if ('' === $line) {
+            while (null !== $message = $this->transport->receive()) {
+                $message = trim($message, " \t\r\n");
+                if ('' === $message) {
                     continue;
                 }
 
                 try {
-                    $this->processLine($line);
+                    $this->processMessage($message);
                 } catch (ConnectionClosedException) {
                     // the response is undeliverable, keep draining inbound messages
                 }
             }
-        } catch (StreamException $e) {
-            throw new RuntimeException('Failed to read from the JSON-RPC connection.', 0, $e);
         } finally {
-            $this->listenerStopped = true;
-            $this->connectionCancellation->cancel();
-            foreach ($this->pendingRequests as $deferred) {
-                if (!$deferred->isComplete()) {
-                    $deferred->error(new ConnectionClosedException('The JSON-RPC connection closed before a response was received.'));
-                }
-            }
-            $this->pendingRequests = [];
+            $this->stop();
         }
     }
 
-    private function processLine(string $line): void
+    private function stop(): void
     {
-        $this->trafficLogger?->logInbound($line);
+        if ($this->listenerStopped) {
+            return;
+        }
+
+        $this->listenerStopped = true;
+        $this->connectionCancellation->cancel();
+        foreach ($this->pendingRequests as $deferred) {
+            if (!$deferred->isComplete()) {
+                $deferred->error(new ConnectionClosedException('The JSON-RPC connection closed before a response was received.'));
+            }
+        }
+        $this->pendingRequests = [];
+    }
+
+    private function processMessage(string $message): void
+    {
+        $this->trafficLogger?->logInbound($message);
 
         try {
-            $decoded = json_decode($line, true, 512, \JSON_THROW_ON_ERROR);
+            $decoded = json_decode($message, true, 512, \JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
             $this->respondError(null, JsonRpcError::PARSE_ERROR, 'Parse error');
 
@@ -128,7 +140,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
             return;
         }
 
-        if ('[' === $line[0]) {
+        if ('[' === $message[0]) {
             if (!array_is_list($decoded)) {
                 $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
 

@@ -27,7 +27,10 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
+use Fabpot\JsonRpc\JsonRpcTransportInterface;
 use Fabpot\JsonRpc\RequestResponder;
+use Fabpot\JsonRpc\StreamJsonRpcTransport;
+use Fabpot\JsonRpc\TrafficLoggerInterface;
 
 use function Amp\async;
 
@@ -40,7 +43,7 @@ final class JsonRpcPeerTest extends TestCase
             . '{"jsonrpc":"2.0","method":"note","params":{}}' . "\n"
         );
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer($input, $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output));
 
         /** @var list<JsonRpcMessage> $received */
         $received = [];
@@ -60,8 +63,8 @@ final class JsonRpcPeerTest extends TestCase
     {
         $clientToServer = new Pipe(4096);
         $serverToClient = new Pipe(4096);
-        $client = new JsonRpcPeer($serverToClient->getSource(), $clientToServer->getSink());
-        $server = new JsonRpcPeer($clientToServer->getSource(), $serverToClient->getSink());
+        $client = new JsonRpcPeer(new StreamJsonRpcTransport($serverToClient->getSource(), $clientToServer->getSink()));
+        $server = new JsonRpcPeer(new StreamJsonRpcTransport($clientToServer->getSource(), $serverToClient->getSink()));
         $dispatcher = new JsonRpcDispatcher($server);
         $dispatcher->onRequest('sum', static fn(array $params): int|float => array_sum($params));
 
@@ -97,7 +100,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testRejectsInvalidRequests(string $line, int|float|string|null $expectedId): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer($line . "\n"), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer($line . "\n"), $output));
         $handled = false;
         $peer->onMessage(static function () use (&$handled): void {
             $handled = true;
@@ -116,7 +119,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testObjectWithSequentialNumericKeysIsNotTreatedAsBatch(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('{"0":{"jsonrpc":"2.0","id":1,"method":"executed"}}'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"0":{"jsonrpc":"2.0","id":1,"method":"executed"}}'), $output));
         $handled = false;
         $peer->onMessage(static function () use (&$handled): void {
             $handled = true;
@@ -135,7 +138,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testEmptyBatchProducesSingleInvalidRequest(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer("[]\n"), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer("[]\n"), $output));
 
         $peer->listen();
 
@@ -148,7 +151,7 @@ final class JsonRpcPeerTest extends TestCase
 
     public function testExplicitNullIdIsARequest(): void
     {
-        $peer = new JsonRpcPeer(new ReadableBuffer('{"jsonrpc":"2.0","id":null,"method":"ping"}'), new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":null,"method":"ping"}'), new CapturingStream()));
         $received = null;
         $peer->onMessage(static function (JsonRpcMessage $message) use (&$received): void {
             $received = $message;
@@ -164,7 +167,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testRespondsWithResultAndNotifies(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
 
         $peer->respond(7, ['ok' => true]);
         $peer->notify('session/update', ['sessionId' => 's1']);
@@ -177,10 +180,54 @@ final class JsonRpcPeerTest extends TestCase
         ], $output->messages());
     }
 
+    public function testPeerExchangesCompleteMessagesWithTheTransport(): void
+    {
+        $transport = $this->createMock(JsonRpcTransportInterface::class);
+        $transport->expects($this->exactly(2))->method('receive')->willReturn('{"jsonrpc":"2.0","method":"inbound"}', null);
+        $transport->expects($this->once())->method('send')->with('{"jsonrpc":"2.0","method":"outbound"}');
+        $logger = new class implements TrafficLoggerInterface {
+            /** @var list<string> */
+            public array $inbound = [];
+            /** @var list<string> */
+            public array $outbound = [];
+
+            public function logInbound(string $line): void
+            {
+                $this->inbound[] = $line;
+            }
+
+            public function logOutbound(string $line): void
+            {
+                $this->outbound[] = $line;
+            }
+        };
+        $peer = new JsonRpcPeer($transport, $logger);
+        $peer->notify('outbound');
+        $peer->listen();
+
+        $this->assertSame(['{"jsonrpc":"2.0","method":"inbound"}'], $logger->inbound);
+        $this->assertSame(['{"jsonrpc":"2.0","method":"outbound"}'], $logger->outbound);
+    }
+
+    public function testCloseClosesTheTransportAndFailsPendingRequests(): void
+    {
+        $transport = $this->createMock(JsonRpcTransportInterface::class);
+        $transport->expects($this->once())->method('send');
+        $transport->expects($this->once())->method('close');
+        $peer = new JsonRpcPeer($transport);
+        $pending = $peer->request('pending');
+
+        $peer->close();
+        $peer->close();
+
+        $this->expectException(ConnectionClosedException::class);
+        $pending->await();
+    }
+
     public function testDispatchesMixedBatchAndReturnsResponseArray(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","method":"note"},42,{"jsonrpc":"2.0","id":2,"method":"second"}]'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","method":"note"},42,{"jsonrpc":"2.0","id":2,"method":"second"}]'), $output));
         $notificationSeen = false;
         $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder) use (&$notificationSeen): void {
             if ($message->isNotification()) {
@@ -213,7 +260,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testBatchReturnsOneErrorForEachInvalidEntry(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('[1,[],{"jsonrpc":"2.0","id":7}]'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[1,[],{"jsonrpc":"2.0","id":7}]'), $output));
 
         $peer->listen();
 
@@ -228,7 +275,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testInvalidBatchEntryWithMethodDoesNotTurnResponseArrayIntoRequestBatch(): void
     {
         $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"result":"ok"},{"jsonrpc":"1.0","method":"invalid"}]');
-        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
         $response = $peer->request('request');
 
         $peer->listen();
@@ -239,7 +286,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testBatchTreatsResponseShapedEntryAsInvalidRequest(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"request"},{"jsonrpc":"2.0","id":2,"result":"not a request"}]'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"request"},{"jsonrpc":"2.0","id":2,"result":"not a request"}]'), $output));
         $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder): void {
             $responder?->resolve('ok');
         });
@@ -260,7 +307,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testBatchWithNoRegisteredHandlerDoesNotWritePartialResponse(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"request"},42]'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"request"},42]'), $output));
 
         $peer->listen();
 
@@ -270,7 +317,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testNotificationOnlyBatchProducesNoResponse(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","method":"first"},{"jsonrpc":"2.0","method":"second"}]'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","method":"first"},{"jsonrpc":"2.0","method":"second"}]'), $output));
         $seen = [];
         $peer->onMessage(static function (JsonRpcMessage $message) use (&$seen): void {
             $seen[] = $message->getMethod();
@@ -301,7 +348,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testIgnoresResponseShapedMessageWithUnsafeIntegerId(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('{"jsonrpc":"2.0","id":9223372036854775809}' . "\n"), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":9223372036854775809}' . "\n"), $output));
         $handled = false;
         $peer->onMessage(static function () use (&$handled): void {
             $handled = true;
@@ -365,7 +412,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testBatchWaitsForDeferredResponsesAndUsesSettlementOrder(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","id":2,"method":"second"}]'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","id":2,"method":"second"}]'), $output));
         $responders = [];
         $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder) use (&$responders): void {
             $responders[$message->getMethod()] = $responder;
@@ -395,7 +442,7 @@ final class JsonRpcPeerTest extends TestCase
             . '{"jsonrpc":"2.0","id":1,"result":"first"}' . "\n"
         );
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer($input, $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output));
 
         $first = $peer->request('first', ['value' => 1]);
         $second = $peer->request('second');
@@ -413,7 +460,7 @@ final class JsonRpcPeerTest extends TestCase
     {
         $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":2,"result":"second"},{"jsonrpc":"2.0","id":1,"result":"first"}]');
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer($input, $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output));
 
         $responses = $peer->batch(
             new BatchRequest('first', ['value' => 1]),
@@ -429,7 +476,7 @@ final class JsonRpcPeerTest extends TestCase
 
     public function testRejectsEmptyOutboundBatch(): void
     {
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('A JSON-RPC batch must contain at least one entry.');
@@ -438,7 +485,7 @@ final class JsonRpcPeerTest extends TestCase
 
     public function testOutboundBatchEncodingFailureThrowsInvalidArgumentException(): void
     {
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
 
         $this->expectException(InvalidArgumentException::class);
         $peer->batch(new BatchRequest('invalid', ['value' => \INF]));
@@ -448,7 +495,7 @@ final class JsonRpcPeerTest extends TestCase
     {
         $output = new CapturingStream();
         $output->close();
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
 
         $this->expectException(ConnectionClosedException::class);
         $peer->batch(new BatchRequest('first'), new BatchNotification('note'));
@@ -457,7 +504,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testInboundResponseBatchSettlesMatchingRequests(): void
     {
         $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":2,"result":"second"},{"jsonrpc":"1.0","id":1,"result":"invalid"},{"jsonrpc":"2.0","id":99,"result":"unknown"}]');
-        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
         $first = $peer->request('first');
         $second = $peer->request('second');
 
@@ -471,7 +518,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testResponseWithFloatIdResolvesTheMatchingIntRequest(): void
     {
         $input = new ReadableBuffer('{"jsonrpc":"2.0","id":1.0,"result":"ok"}');
-        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
         $response = $peer->request('ping');
 
         $peer->listen();
@@ -482,7 +529,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testStreamReadFailureThrowsRuntimeExceptionAndFailsPendingRequests(): void
     {
         $input = new FailingReadStream('{"jsonrpc":"2.0","method":"note"}' . "\n");
-        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
         $seen = 0;
         $peer->onMessage(static function () use (&$seen): void {
             ++$seen;
@@ -505,7 +552,7 @@ final class JsonRpcPeerTest extends TestCase
     {
         $output = new CapturingStream();
         $output->failNextWrite();
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Failed to write to the JSON-RPC connection.');
@@ -516,7 +563,7 @@ final class JsonRpcPeerTest extends TestCase
     {
         $output = new CapturingStream();
         $output->close();
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
 
         $this->expectException(ConnectionClosedException::class);
         $peer->request('ping');
@@ -525,7 +572,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testOutboundRequestFailsWithRemoteError(): void
     {
         $input = new ReadableBuffer('{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Bad params","data":{"field":"value"}}}');
-        $peer = new JsonRpcPeer($input, new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
         $response = $peer->request('fail');
 
         $peer->listen();
@@ -558,7 +605,7 @@ final class JsonRpcPeerTest extends TestCase
     #[DataProvider('invalidResponseProvider')]
     public function testInvalidResponseFailsItsRequest(string $line): void
     {
-        $peer = new JsonRpcPeer(new ReadableBuffer($line), new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer($line), new CapturingStream()));
         $response = $peer->request('fail');
 
         $peer->listen();
@@ -570,7 +617,7 @@ final class JsonRpcPeerTest extends TestCase
 
     public function testRequestAfterListenerStopsThrowsConnectionClosedException(): void
     {
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
         $peer->listen();
 
         $this->expectException(ConnectionClosedException::class);
@@ -580,7 +627,7 @@ final class JsonRpcPeerTest extends TestCase
 
     public function testBatchRequestAfterListenerStopsThrowsConnectionClosedException(): void
     {
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
         $peer->listen();
 
         $this->expectException(ConnectionClosedException::class);
@@ -590,7 +637,7 @@ final class JsonRpcPeerTest extends TestCase
 
     public function testConnectionCloseFailsPendingRequests(): void
     {
-        $peer = new JsonRpcPeer(new ReadableBuffer(''), new CapturingStream());
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
         $response = $peer->request('never-answered');
 
         $peer->listen();
@@ -603,7 +650,7 @@ final class JsonRpcPeerTest extends TestCase
     public function testRejectsNonJsonWhitespaceAroundMessage(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer("\0{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\0\n"), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer("\0{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\0\n"), $output));
         $handled = false;
         $peer->onMessage(static function () use (&$handled): void {
             $handled = true;
@@ -623,10 +670,10 @@ final class JsonRpcPeerTest extends TestCase
     {
         $output = new CapturingStream();
         $output->close();
-        $peer = new JsonRpcPeer(new ReadableBuffer(
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(
             'not json' . "\n"
             . '{"jsonrpc":"2.0","method":"note"}' . "\n"
-        ), $output);
+        ), $output));
         $seen = [];
         $peer->onMessage(static function (JsonRpcMessage $message) use (&$seen): void {
             $seen[] = $message->getMethod();
@@ -644,7 +691,7 @@ final class JsonRpcPeerTest extends TestCase
             . '{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}' . "\n"
         );
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer($input, $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output));
 
         $seen = [];
         $peer->onMessage(static function (JsonRpcMessage $m) use (&$seen): void {
@@ -666,7 +713,7 @@ final class JsonRpcPeerTest extends TestCase
     private function drivePeer(string $input, callable $configure): CapturingStream
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer($input), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer($input), $output));
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();

@@ -18,6 +18,7 @@ use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
 use Fabpot\JsonRpc\JsonRpcPeer;
+use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\delay;
@@ -39,7 +40,7 @@ final class JsonRpcDispatcherTest extends TestCase
     public function testListenWaitsForRequestHandlers(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"echo"}'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"echo"}'), $output));
         $dispatcher = new JsonRpcDispatcher($peer);
         $dispatcher->onRequest('echo', static fn(): string => 'done');
 
@@ -122,7 +123,7 @@ final class JsonRpcDispatcherTest extends TestCase
     public function testHandlerRespondingAfterTheConnectionClosedDoesNotFailTheListener(): void
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"wait"}'), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"wait"}'), $output));
         $dispatcher = new JsonRpcDispatcher($peer);
         $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use ($output): string {
             try {
@@ -332,7 +333,7 @@ final class JsonRpcDispatcherTest extends TestCase
     private function drive(string $input, callable $configure): array
     {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new ReadableBuffer($input), $output);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer($input), $output));
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();
