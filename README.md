@@ -1,8 +1,8 @@
 # JSON-RPC
 
 A minimal, asynchronous, bidirectional [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
-peer over line-delimited JSON streams, built on [amphp](https://amphp.org) byte
-streams and the [Revolt](https://revolt.run) event loop.
+peer over message-oriented transports, built on [amphp](https://amphp.org) and
+the [Revolt](https://revolt.run) event loop.
 
 This is a **peer** JSON-RPC library: a single long-lived connection over which
 both sides send requests and notifications, answer inbound requests, and
@@ -58,9 +58,8 @@ missing:
 
 - **Peer**: the same endpoint serves inbound requests and emits its own
   requests and notifications.
-- **Persistent duplex transport**: line-delimited JSON over any amphp
-  `ReadableStream`/`WritableStream` (stdio, a socket, or in-memory streams for
-  tests).
+- **Persistent duplex transport**: complete JSON-RPC messages over line-delimited
+  amphp byte streams, WebSocket connections, or a custom transport.
 - **Concurrent requests**: each inbound request runs in its own coroutine, so
   handlers can suspend on asynchronous work while the peer keeps processing
   other messages on the same connection.
@@ -79,13 +78,29 @@ composer require fabpot/json-rpc-peer
 use Amp\ByteStream;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcPeer;
+use Fabpot\JsonRpc\StreamJsonRpcTransport;
 
 $input = ByteStream\getStdin();
 $output = ByteStream\getStdout();
 
-$peer = new JsonRpcPeer($input, $output);
+$peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output));
 $dispatcher = new JsonRpcDispatcher($peer);
 ```
+
+For WebSocket connections, install `amphp/websocket` and pass its client to the
+message-oriented transport. Each text frame contains one complete JSON-RPC
+message; binary frames are rejected:
+
+```php
+use Fabpot\JsonRpc\JsonRpcPeer;
+use Fabpot\JsonRpc\WebsocketJsonRpcTransport;
+
+$peer = new JsonRpcPeer(new WebsocketJsonRpcTransport($websocketClient));
+```
+
+Custom transports can implement `JsonRpcTransportInterface`. `receive()` returns
+one complete JSON-RPC message or `null` when the connection closes; `send()`
+accepts one complete JSON-RPC message.
 
 ### Handling requests and notifications
 
@@ -109,8 +124,8 @@ $dispatcher->onNotification('log', function (array $params): void {
 ### Running the peer
 
 After registering handlers, call `listen()`. It reads and dispatches messages
-until the input stream reaches EOF or is closed. It then requests cancellation
-of active request handlers and waits for them to finish before returning:
+until the transport closes. It then requests cancellation of active request
+handlers and waits for them to finish before returning:
 
 ```php
 $peer->listen();
@@ -129,8 +144,8 @@ $peer->listen();
 | `INTERNAL_ERROR` | `-32603` | A request handler fails unexpectedly or its result cannot be encoded. |
 
 The peer emits `PARSE_ERROR`, `INVALID_REQUEST`, and `METHOD_NOT_FOUND`
-automatically. Malformed lines receive a `PARSE_ERROR` response and are skipped,
-so a single bad line does not stop the listener. The peer also converts
+automatically. Malformed messages receive a `PARSE_ERROR` response and are
+skipped, so a single bad message does not stop the listener. The peer also converts
 unexpected exceptions to `INTERNAL_ERROR` without exposing their messages.
 
 A request handler can throw `JsonRpcException` with `INVALID_PARAMS` when its
@@ -190,7 +205,7 @@ function processItems(array $items, Cancellation $cancellation): array
 Cancellation is cooperative: the handler notices a cancellation request when it
 reaches `throwIfRequested()` or suspends in an Amp API that received the
 `Cancellation`. The dispatcher also requests cancellation of every active
-handler when the input stream closes.
+handler when the transport closes.
 
 Request handlers do not need to create a `Future` or call `Amp\async()`; the
 dispatcher already runs them in a coroutine:
@@ -288,15 +303,14 @@ $result = $peer->request('workspace/status', [
     'workspace' => '/project',
 ])->await();
 
-$input->close();
+$peer->close();
 $listener->await();
 ```
 
-Calling `$input->close()` is the local way to stop `listen()`; an EOF caused by
-the remote side closing its output stops it as well. When the input closes, all
-outstanding outbound requests fail with a
-`Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests throw the
-same exception after the listener stops.
+Calling `close()` closes the transport and stops `listen()`. A remote transport
+closure stops it as well. When the transport closes, all outstanding outbound
+requests fail with a `Fabpot\JsonRpc\Exception\ConnectionClosedException`. New
+requests throw the same exception after the listener stops.
 
 The peer can also push notifications to the other side at any time:
 
@@ -348,18 +362,19 @@ can produce this response if `fast` settles before `slow`:
 ## Traffic logging
 
 Pass a `TrafficLoggerInterface` to the peer to record raw inbound and outbound
-lines. `PsrTrafficLogger` forwards them to a PSR-3 logger at the `debug` level
+messages without transport framing. `PsrTrafficLogger` forwards them to a PSR-3 logger at the `debug` level
 and recursively redacts common credential keys and credentials in values that
 are URLs. Pass additional protocol-specific sensitive keys as the second
 argument:
 
 ```php
 use Fabpot\JsonRpc\PsrTrafficLogger;
+use Fabpot\JsonRpc\StreamJsonRpcTransport;
 
 $trafficLogger = new PsrTrafficLogger($logger, [
     'privateKey',
 ]);
-$peer = new JsonRpcPeer($input, $output, $trafficLogger);
+$peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output), $trafficLogger);
 ```
 
 The adapter always redacts common credential keys such as `authorization`,

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add message-oriented transports for line-delimited streams and WebSocket connections.
+
 ## 0.4.0 - 2026-07-22
 
 - Convert error responses with unencodable data to internal errors.

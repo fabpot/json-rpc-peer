@@ -1,7 +1,7 @@
 {
     "name": "fabpot/json-rpc-peer",
     "type": "library",
-    "description": "An asynchronous, bidirectional JSON-RPC 2.0 peer over line-delimited streams, built on amphp",
+    "description": "An asynchronous, bidirectional JSON-RPC 2.0 peer over message-oriented transports, built on amphp",
     "keywords": ["json-rpc", "jsonrpc", "async", "amphp", "stdio", "lsp", "mcp"],
     "license": "MIT",
     "authors": [
