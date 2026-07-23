@@ -11,10 +11,15 @@
 
 namespace Fabpot\JsonRpc\Tests;
 
+use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableIterableStream;
+use Amp\CancelledException;
+use Amp\DeferredCancellation;
 use Fabpot\JsonRpc\Exception\RuntimeException;
 use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use PHPUnit\Framework\TestCase;
+
+use function Amp\async;
 
 final class StreamJsonRpcTransportTest extends TestCase
 {
@@ -31,6 +36,18 @@ final class StreamJsonRpcTransportTest extends TestCase
         $this->assertSame('{"second":2}', $transport->receive());
         $this->assertSame('{"third":3}', $transport->receive());
         $this->assertNull($transport->receive());
+    }
+
+    public function testCancellationInterruptsPendingReceive(): void
+    {
+        $pipe = new Pipe(4096);
+        $cancellation = new DeferredCancellation();
+        $transport = new StreamJsonRpcTransport($pipe->getSource(), new CapturingStream());
+        $receive = async(fn(): ?string => $transport->receive($cancellation->getCancellation()));
+        $cancellation->cancel();
+
+        $this->expectException(CancelledException::class);
+        $receive->await();
     }
 
     public function testSendsOneLineDelimitedMessage(): void
