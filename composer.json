@@ -18,9 +18,11 @@
         "phpunit/phpunit": "^12",
         "phpstan/phpstan": "^2.1",
         "php-cs-fixer/shim": "^3.93",
+        "amphp/websocket": "^2",
         "psr/log": "^1.1|^2|^3"
     },
     "suggest": {
+        "amphp/websocket": "To exchange JSON-RPC messages over WebSocket connections.",
         "psr/log": "To forward JSON-RPC traffic to a PSR-3 logger."
     },
     "autoload": {
