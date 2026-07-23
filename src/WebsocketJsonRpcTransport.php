@@ -21,20 +21,9 @@ use Fabpot\JsonRpc\Exception\UnexpectedValueException;
 
 final class WebsocketJsonRpcTransport implements JsonRpcTransportInterface
 {
-    /** @var WebsocketClient */
-    private readonly object $client;
-
-    public function __construct(object $client)
-    {
-        if (!interface_exists(WebsocketClient::class)) {
-            throw new RuntimeException('The amphp/websocket package is required to use WebsocketJsonRpcTransport.');
-        }
-        if (!$client instanceof WebsocketClient) {
-            throw new \TypeError(sprintf('Expected an instance of %s, got %s.', WebsocketClient::class, get_debug_type($client)));
-        }
-
-        $this->client = $client;
-    }
+    public function __construct(
+        private readonly WebsocketClient $client,
+    ) {}
 
     public function receive(?Cancellation $cancellation = null): ?string
     {
