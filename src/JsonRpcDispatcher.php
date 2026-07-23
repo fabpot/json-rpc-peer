@@ -150,8 +150,8 @@ final class JsonRpcDispatcher
                 } catch (JsonRpcException $e) {
                     try {
                         $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
-                    } catch (InvalidArgumentException) {
-                        $this->reportUnhandledError($e, $message);
+                    } catch (InvalidArgumentException $encodingError) {
+                        $this->reportUnhandledError($encodingError, $message);
                         $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
                     }
                 } catch (\Throwable $e) {

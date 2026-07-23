@@ -216,11 +216,15 @@ final class JsonRpcDispatcherTest extends TestCase
 
     public function testJsonRpcExceptionWithUnencodableDataBecomesInternalErrorResponse(): void
     {
+        $reported = [];
         $output = $this->drive(
             '{"jsonrpc":"2.0","id":5,"method":"boom","params":{}}',
-            static function (JsonRpcDispatcher $dispatcher): void {
+            static function (JsonRpcDispatcher $dispatcher) use (&$reported): void {
                 $dispatcher->onRequest('boom', static function (): never {
                     throw new JsonRpcException(-32000, 'app error', ['value' => \INF]);
+                });
+                $dispatcher->onUnhandledError(static function (\Throwable $error) use (&$reported): void {
+                    $reported[] = $error;
                 });
             },
         );
@@ -230,6 +234,9 @@ final class JsonRpcDispatcherTest extends TestCase
             'id' => 5,
             'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error'],
         ]], $output);
+        $this->assertCount(1, $reported);
+        $this->assertInstanceOf(InvalidArgumentException::class, $reported[0]);
+        $this->assertInstanceOf(\JsonException::class, $reported[0]->getPrevious());
     }
 
     public function testUnexpectedExceptionBecomesInternalErrorResponse(): void
