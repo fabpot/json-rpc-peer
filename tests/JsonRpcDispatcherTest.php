@@ -131,11 +131,12 @@ final class JsonRpcDispatcherTest extends TestCase
         ], $output);
     }
 
-    public function testCancellationNotificationCancelsAllRequestsSharingAnId(): void
+    public function testCancelRequestReturnsTheNumberOfMatchingActiveRequests(): void
     {
+        $matched = [];
         $output = $this->drive(
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"cancel\",\"params\":{\"requestId\":1}}",
-            static function (JsonRpcDispatcher $dispatcher): void {
+            static function (JsonRpcDispatcher $dispatcher) use (&$matched): void {
                 $count = 0;
                 $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use (&$count): string {
                     $call = ++$count;
@@ -147,10 +148,14 @@ final class JsonRpcDispatcherTest extends TestCase
 
                     return "completed-{$call}";
                 });
-                $dispatcher->onCancel('cancel', 'requestId');
+                $dispatcher->onNotification('cancel', static function () use ($dispatcher, &$matched): void {
+                    $matched[] = $dispatcher->cancelRequest(1);
+                    $matched[] = $dispatcher->cancelRequest(99);
+                });
             },
         );
 
+        $this->assertSame([2, 0], $matched);
         $this->assertSame([
             ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled-1'],
             ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled-2'],

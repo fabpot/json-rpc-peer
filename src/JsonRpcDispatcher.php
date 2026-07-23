@@ -100,11 +100,14 @@ final class JsonRpcDispatcher
         });
     }
 
-    public function cancelRequest(int|float|string|null $id): void
+    public function cancelRequest(int|float|string|null $id): int
     {
-        foreach ($this->activeRequests[$this->requestKey($id)] ?? [] as $request) {
+        $requests = $this->activeRequests[$this->requestKey($id)] ?? [];
+        foreach ($requests as $request) {
             $request->cancel();
         }
+
+        return \count($requests);
     }
 
     /**
