@@ -456,6 +456,22 @@ final class JsonRpcPeerTest extends TestCase
         ], $output->messages());
     }
 
+    public function testOutboundRequestHandleExposesItsIdAndFuture(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"result":"done"}'), $output));
+
+        $request = $peer->startRequest('compact');
+        $peer->notify('cancel', ['requestId' => $request->getId()]);
+        $peer->listen();
+
+        $this->assertSame('done', $request->getFuture()->await());
+        $this->assertSame([
+            ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'compact'],
+            ['jsonrpc' => '2.0', 'method' => 'cancel', 'params' => ['requestId' => 1]],
+        ], $output->messages());
+    }
+
     public function testWritesMixedOutboundBatchAndReturnsRequestFutures(): void
     {
         $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":2,"result":"second"},{"jsonrpc":"2.0","id":1,"result":"first"}]');

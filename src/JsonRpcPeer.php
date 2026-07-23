@@ -167,6 +167,14 @@ final class JsonRpcPeer implements ResponseSenderInterface
      */
     public function request(string $method, array $params = []): Future
     {
+        return $this->startRequest($method, $params)->getFuture();
+    }
+
+    /**
+     * @param array<array-key, mixed> $params
+     */
+    public function startRequest(string $method, array $params = []): OutboundRequest
+    {
         if ($this->listenerStopped) {
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
@@ -191,7 +199,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
             throw $e;
         }
 
-        return $deferred->getFuture();
+        return new OutboundRequest($id, $deferred->getFuture());
     }
 
     /**
