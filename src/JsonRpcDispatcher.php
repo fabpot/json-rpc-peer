@@ -36,6 +36,9 @@ final class JsonRpcDispatcher
     /** @var array<string, array<int, DeferredCancellation>> */
     private array $activeRequests = [];
 
+    /** @var (callable(\Throwable, JsonRpcMessage): void)|null */
+    private $unhandledErrorHandler;
+
     public function __construct(
         private readonly JsonRpcPeer $peer,
     ) {
@@ -63,6 +66,14 @@ final class JsonRpcDispatcher
     public function onNotification(string $method, callable $handler): void
     {
         $this->notificationHandlers[$method] = $handler;
+    }
+
+    /**
+     * @param callable(\Throwable, JsonRpcMessage): void $handler
+     */
+    public function onUnhandledError(callable $handler): void
+    {
+        $this->unhandledErrorHandler = $handler;
     }
 
     public function onCancel(string $method, string $idParameter): void
@@ -99,7 +110,11 @@ final class JsonRpcDispatcher
         if ($message->isNotification()) {
             $handler = $this->notificationHandlers[$method] ?? null;
             if (null !== $handler) {
-                $handler($params);
+                try {
+                    $handler($params);
+                } catch (\Throwable $e) {
+                    $this->reportUnhandledError($e, $message);
+                }
             }
 
             return null;
@@ -117,7 +132,7 @@ final class JsonRpcDispatcher
         $deferredCancellation = new DeferredCancellation();
         $this->activeRequests[$key][spl_object_id($deferredCancellation)] = $deferredCancellation;
 
-        return async(function () use ($handler, $params, $responder, $key, $deferredCancellation): void {
+        return async(function () use ($handler, $message, $params, $responder, $key, $deferredCancellation): void {
             try {
                 try {
                     $responder->resolve($handler($params, $deferredCancellation->getCancellation()));
@@ -125,9 +140,11 @@ final class JsonRpcDispatcher
                     try {
                         $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
                     } catch (InvalidArgumentException) {
+                        $this->reportUnhandledError($e, $message);
                         $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
                     }
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
+                    $this->reportUnhandledError($e, $message);
                     $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
                 }
             } catch (ConnectionClosedException) {
@@ -139,6 +156,18 @@ final class JsonRpcDispatcher
                 }
             }
         });
+    }
+
+    private function reportUnhandledError(\Throwable $error, JsonRpcMessage $message): void
+    {
+        if (null === $this->unhandledErrorHandler) {
+            return;
+        }
+
+        try {
+            ($this->unhandledErrorHandler)($error, $message);
+        } catch (\Throwable) {
+        }
     }
 
     private function requestKey(int|float|string|null $id): string

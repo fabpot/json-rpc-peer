@@ -17,6 +17,7 @@ use Amp\CancelledException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
+use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
 use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use PHPUnit\Framework\TestCase;
@@ -192,11 +193,15 @@ final class JsonRpcDispatcherTest extends TestCase
 
     public function testUnexpectedExceptionBecomesInternalErrorResponse(): void
     {
+        $reported = [];
         $output = $this->drive(
             '{"jsonrpc":"2.0","id":5,"method":"boom","params":{}}',
-            static function (JsonRpcDispatcher $dispatcher): void {
+            static function (JsonRpcDispatcher $dispatcher) use (&$reported): void {
                 $dispatcher->onRequest('boom', static function (): never {
                     throw new \RuntimeException('sensitive details');
+                });
+                $dispatcher->onUnhandledError(static function (\Throwable $error, JsonRpcMessage $message) use (&$reported): void {
+                    $reported[] = [$error, $message];
                 });
             },
         );
@@ -206,6 +211,31 @@ final class JsonRpcDispatcherTest extends TestCase
             'id' => 5,
             'error' => ['code' => JsonRpcError::INTERNAL_ERROR, 'message' => 'Internal error'],
         ]], $output);
+        $this->assertCount(1, $reported);
+        $this->assertSame('sensitive details', $reported[0][0]->getMessage());
+        $this->assertSame('boom', $reported[0][1]->getMethod());
+    }
+
+    public function testNotificationExceptionIsReportedWithoutAResponse(): void
+    {
+        $reported = [];
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","method":"boom"}',
+            static function (JsonRpcDispatcher $dispatcher) use (&$reported): void {
+                $dispatcher->onNotification('boom', static function (): never {
+                    throw new \RuntimeException('notification failed');
+                });
+                $dispatcher->onUnhandledError(static function (\Throwable $error, JsonRpcMessage $message) use (&$reported): void {
+                    $reported[] = [$error, $message];
+                    throw new \RuntimeException('reporting failed');
+                });
+            },
+        );
+
+        $this->assertSame([], $output);
+        $this->assertCount(1, $reported);
+        $this->assertSame('notification failed', $reported[0][0]->getMessage());
+        $this->assertTrue($reported[0][1]->isNotification());
     }
 
     public function testNotificationHandlerProducesNoResponse(): void
