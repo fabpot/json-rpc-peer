@@ -14,6 +14,7 @@ namespace Fabpot\JsonRpc\Tests;
 use Amp\ByteStream\ReadableBuffer;
 use Amp\Cancellation;
 use Amp\CancelledException;
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
@@ -36,6 +37,41 @@ final class JsonRpcDispatcherTest extends TestCase
         );
 
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => ['echoed' => 42]]], $output);
+    }
+
+    public function testRejectsDuplicateRequestHandlerRegistration(): void
+    {
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('duplicate', static fn(): null => null);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('A request handler is already registered for method "duplicate".');
+        $dispatcher->onRequest('duplicate', static fn(): null => null);
+    }
+
+    public function testRejectsDuplicateNotificationHandlerRegistration(): void
+    {
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onNotification('duplicate', static function (): void {});
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('A notification handler is already registered for method "duplicate".');
+        $dispatcher->onNotification('duplicate', static function (): void {});
+    }
+
+    public function testAllowsRequestAndNotificationHandlersForTheSameMethod(): void
+    {
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"same\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"same\"}",
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onNotification('same', static function (): void {});
+                $dispatcher->onRequest('same', static fn(): string => 'request');
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'request']], $output);
     }
 
     public function testListenWaitsForRequestHandlers(): void

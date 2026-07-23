@@ -57,6 +57,10 @@ final class JsonRpcDispatcher
      */
     public function onRequest(string $method, callable $handler): void
     {
+        if (isset($this->requestHandlers[$method])) {
+            throw new InvalidArgumentException(sprintf('A request handler is already registered for method "%s".', $method));
+        }
+
         $this->requestHandlers[$method] = $handler;
     }
 
@@ -65,6 +69,10 @@ final class JsonRpcDispatcher
      */
     public function onNotification(string $method, callable $handler): void
     {
+        if (isset($this->notificationHandlers[$method])) {
+            throw new InvalidArgumentException(sprintf('A notification handler is already registered for method "%s".', $method));
+        }
+
         $this->notificationHandlers[$method] = $handler;
     }
 
