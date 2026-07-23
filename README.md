@@ -100,7 +100,9 @@ $peer = new JsonRpcPeer(new WebsocketJsonRpcTransport($websocketClient));
 
 Custom transports can implement `JsonRpcTransportInterface`. `receive()` returns
 one complete JSON-RPC message or `null` when the connection closes; `send()`
-accepts one complete JSON-RPC message.
+accepts one complete JSON-RPC message. The peer takes ownership of the supplied
+transport. Call `$peer->close()` rather than closing its underlying streams or
+WebSocket directly.
 
 ### Handling requests and notifications
 
@@ -277,11 +279,14 @@ $dispatcher->onCancel('$/cancelRequest', 'id');
 ```
 
 For a cancellation payload that cannot be described by a top-level parameter,
-use `onNotification()` and `cancelRequest()` directly:
+use `onNotification()` and `cancelRequest()` directly. `cancelRequest()` returns
+the number of matching active handlers, including concurrent requests sharing
+an ID:
 
 ```php
-$dispatcher->onNotification('custom/cancel', function (array $params) use ($dispatcher): void {
-    $dispatcher->cancelRequest($params['request']['id']);
+$dispatcher->onNotification('custom/cancel', function (array $params) use ($dispatcher, $logger): void {
+    $count = $dispatcher->cancelRequest($params['request']['id']);
+    $logger->debug('Canceled JSON-RPC handlers.', ['count' => $count]);
 });
 ```
 
@@ -338,10 +343,11 @@ $peer->close();
 $listener->await();
 ```
 
-Calling `close()` closes the transport and stops `listen()`. A remote transport
-closure stops it as well. When the transport closes, all outstanding outbound
-requests fail with a `Fabpot\JsonRpc\Exception\ConnectionClosedException`. New
-requests throw the same exception after the listener stops.
+Calling `close()` closes the owned transport, including its underlying streams
+or WebSocket, and stops `listen()`. A remote transport closure stops it as well.
+When the transport closes, all outstanding outbound requests fail with a
+`Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests throw the
+same exception after the listener stops.
 
 The peer can also push notifications to the other side at any time:
 

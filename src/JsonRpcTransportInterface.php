@@ -13,6 +13,11 @@ namespace Fabpot\JsonRpc;
 
 use Amp\Cancellation;
 
+/**
+ * Exchanges complete JSON-RPC messages over an owned connection.
+ *
+ * A transport passed to JsonRpcPeer is owned by the peer and closed by JsonRpcPeer::close().
+ */
 interface JsonRpcTransportInterface
 {
     public function receive(?Cancellation $cancellation = null): ?string;

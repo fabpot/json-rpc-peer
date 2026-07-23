@@ -44,6 +44,9 @@ final class JsonRpcPeer implements ResponseSenderInterface
     /** @var array<string, Future<mixed>> */
     private array $inboundRequests = [];
 
+    /**
+     * Takes ownership of the transport and closes it when close() is called.
+     */
     public function __construct(
         private readonly JsonRpcTransportInterface $transport,
         private readonly ?TrafficLoggerInterface $trafficLogger = null,

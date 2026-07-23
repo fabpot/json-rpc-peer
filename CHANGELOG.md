@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add outbound request handles that expose generated request IDs.
+- Return the number of active handlers matched by inbound cancellation.
 - Add reporting for unexpected request and notification handler errors.
 - Reject duplicate request and notification handler registrations.
 - Add message-oriented transports for line-delimited streams and WebSocket connections.
