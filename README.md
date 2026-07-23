@@ -121,6 +121,10 @@ $dispatcher->onNotification('log', function (array $params): void {
 });
 ```
 
+Registering a second request or notification handler for the same method throws
+an `InvalidArgumentException`. Request and notification handlers have separate
+namespaces, so the same method may have one of each.
+
 ### Running the peer
 
 After registering handlers, call `listen()`. It reads and dispatches messages
@@ -173,6 +177,21 @@ errors outside the reserved JSON-RPC codes, as shown in the cancellation
 example below. At an application boundary, translate domain exceptions to
 `JsonRpcException` in the registered handler rather than coupling application
 services to JSON-RPC error codes.
+
+Unexpected handler exceptions remain hidden from the remote peer, but can be
+reported locally. Exceptions thrown by the error handler are ignored so they do
+not interrupt the peer:
+
+```php
+use Fabpot\JsonRpc\JsonRpcMessage;
+
+$dispatcher->onUnhandledError(function (\Throwable $error, JsonRpcMessage $message) use ($logger): void {
+    $logger->error('JSON-RPC handler failed.', [
+        'exception' => $error,
+        'method' => $message->getMethod(),
+    ]);
+});
+```
 
 ### Long-running requests and cancellation
 
@@ -291,6 +310,18 @@ sequenceDiagram
 Outbound requests return an Amp `Future`. Responses are matched by ID, so they
 can arrive in any order. Remote JSON-RPC errors throw a `JsonRpcException` when
 the future is awaited.
+
+For protocols that cancel an outbound request by ID, use `startRequest()` to
+get both the generated ID and the future:
+
+```php
+$request = $peer->startRequest('compact', $params);
+$peer->notify('cancel', ['requestId' => $request->getId()]);
+$result = $request->getFuture()->await();
+```
+
+JSON-RPC does not define a cancellation notification, so the application remains
+responsible for its method and payload.
 
 `listen()` must process the response while the request is pending, so run it in
 a separate coroutine. Await the listener when shutting down to ensure it has

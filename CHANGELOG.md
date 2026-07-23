@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add outbound request handles that expose generated request IDs.
+- Add reporting for unexpected request and notification handler errors.
+- Reject duplicate request and notification handler registrations.
 - Add message-oriented transports for line-delimited streams and WebSocket connections.
 
 ## 0.4.0 - 2026-07-22
