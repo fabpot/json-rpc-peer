@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add standard closable lifecycle support to JSON-RPC peers.
 - Add outbound request handles that expose generated request IDs.
 - Return the number of active handlers matched by inbound cancellation.
 - Add reporting for unexpected request and notification handler errors.

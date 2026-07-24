@@ -345,6 +345,8 @@ $listener->await();
 
 Calling `close()` closes the owned transport, including its underlying streams
 or WebSocket, and stops `listen()`. A remote transport closure stops it as well.
+The peer implements `Amp\Closable`: `isClosed()` reports whether listening has
+stopped, and `onClose()` registers callbacks for local or remote closure.
 When the transport closes, all outstanding outbound requests fail with a
 `Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests throw the
 same exception after the listener stops.

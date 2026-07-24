@@ -12,6 +12,7 @@
 namespace Fabpot\JsonRpc;
 
 use Amp\Cancellation;
+use Amp\Closable;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
 use Amp\Future;
@@ -27,13 +28,15 @@ use function Amp\async;
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-final class JsonRpcPeer implements ResponseSenderInterface
+final class JsonRpcPeer implements Closable, ResponseSenderInterface
 {
     /** @var (callable(JsonRpcMessage, RequestResponder|null): mixed)|null */
     private $messageHandler;
 
     private readonly JsonRpcWriter $writer;
     private readonly DeferredCancellation $connectionCancellation;
+    /** @var DeferredFuture<void> */
+    private readonly DeferredFuture $onClose;
     private int $nextRequestId = 1;
     private bool $listenerStopped = false;
     private bool $transportClosed = false;
@@ -53,6 +56,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
     ) {
         $this->writer = new JsonRpcWriter($transport, $trafficLogger);
         $this->connectionCancellation = new DeferredCancellation();
+        $this->onClose = new DeferredFuture();
     }
 
     public function getConnectionCancellation(): Cancellation
@@ -89,6 +93,16 @@ final class JsonRpcPeer implements ResponseSenderInterface
         $this->stop();
     }
 
+    public function isClosed(): bool
+    {
+        return $this->listenerStopped;
+    }
+
+    public function onClose(\Closure $onClose): void
+    {
+        $this->onClose->getFuture()->finally($onClose)->ignore();
+    }
+
     private function listenLoop(): void
     {
         try {
@@ -123,6 +137,7 @@ final class JsonRpcPeer implements ResponseSenderInterface
             }
         }
         $this->pendingRequests = [];
+        $this->onClose->complete();
     }
 
     private function processMessage(string $message): void

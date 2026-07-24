@@ -216,12 +216,37 @@ final class JsonRpcPeerTest extends TestCase
         $transport->expects($this->once())->method('close');
         $peer = new JsonRpcPeer($transport);
         $pending = $peer->request('pending');
+        $closed = 0;
+        $peer->onClose(static function () use (&$closed): void {
+            ++$closed;
+        });
 
         $peer->close();
         $peer->close();
+        \Amp\delay(0);
 
+        $this->assertTrue($peer->isClosed());
+        $this->assertSame(1, $closed);
         $this->expectException(ConnectionClosedException::class);
         $pending->await();
+    }
+
+    public function testRemoteClosureClosesThePeerAndInvokesLateCloseCallbacks(): void
+    {
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $closed = 0;
+        $peer->onClose(static function () use (&$closed): void {
+            ++$closed;
+        });
+
+        $peer->listen();
+        $peer->onClose(static function () use (&$closed): void {
+            ++$closed;
+        });
+        \Amp\delay(0);
+
+        $this->assertTrue($peer->isClosed());
+        $this->assertSame(2, $closed);
     }
 
     public function testDispatchesMixedBatchAndReturnsResponseArray(): void
