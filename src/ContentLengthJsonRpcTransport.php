@@ -119,10 +119,13 @@ final class ContentLengthJsonRpcTransport implements JsonRpcTransportInterface
             }
 
             [$name, $value] = explode(':', $header, 2);
-            $value = trim($value);
             if (!preg_match("/^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$/D", $name)) {
                 throw new UnexpectedValueException('A JSON-RPC message header name is invalid.');
             }
+            if (!preg_match('/^[\x09\x20-\x7E\x80-\xFF]*$/D', $value)) {
+                throw new UnexpectedValueException('A JSON-RPC message header value is invalid.');
+            }
+            $value = trim($value, " \t");
 
             if (0 !== strcasecmp($name, 'Content-Length')) {
                 continue;

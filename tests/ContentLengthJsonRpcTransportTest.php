@@ -112,6 +112,8 @@ final class ContentLengthJsonRpcTransportTest extends TestCase
         yield 'malformed header' => ["Content-Length: 2\r\nBroken\r\n\r\n{}", 'header is malformed'];
         yield 'invalid header name' => ["Bad Header: value\r\nContent-Length: 2\r\n\r\n{}", 'header name is invalid'];
         yield 'whitespace before header name' => [" Content-Length: 2\r\n\r\n{}", 'header name is invalid'];
+        yield 'control character in additional header' => ["X-Test: value\0\r\nContent-Length: 2\r\n\r\n{}", 'header value is invalid'];
+        yield 'null-padded length' => ["Content-Length: \0 2\0\r\n\r\n{}", 'header value is invalid'];
         yield 'line feed separators' => ["Content-Length: 2\n\n{}", 'headers were complete'];
         yield 'truncated headers' => ["Content-Length: 2\r\n", 'headers were complete'];
         yield 'truncated body' => ["Content-Length: 3\r\n\r\n{}", 'body was complete'];
