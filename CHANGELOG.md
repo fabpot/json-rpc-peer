@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-07-30
 
 - Add standard closable lifecycle support to JSON-RPC peers.
 - Add outbound request handles that expose generated request IDs.
