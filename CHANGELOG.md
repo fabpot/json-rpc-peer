@@ -8,6 +8,7 @@
 - Add reporting for unexpected request and notification handler errors.
 - Reject duplicate request and notification handler registrations.
 - Add message-oriented transports for line-delimited streams and WebSocket connections.
+- Add content-length framed stream transport support.
 
 ## 0.4.0 - 2026-07-22
 

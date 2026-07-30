@@ -66,6 +66,11 @@ final class CapturingStream implements WritableStream
         }
     }
 
+    public function contents(): string
+    {
+        return $this->contents;
+    }
+
     /**
      * @return list<array<array-key, mixed>>
      */

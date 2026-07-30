@@ -87,6 +87,21 @@ $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output));
 $dispatcher = new JsonRpcDispatcher($peer);
 ```
 
+`StreamJsonRpcTransport` exchanges one JSON-RPC message per line. For protocols
+using `Content-Length` headers, such as LSP, use the content-length transport:
+
+```php
+use Fabpot\JsonRpc\ContentLengthJsonRpcTransport;
+use Fabpot\JsonRpc\JsonRpcPeer;
+
+$peer = new JsonRpcPeer(new ContentLengthJsonRpcTransport($input, $output));
+```
+
+The transport accepts additional headers, treats header names as
+case-insensitive, and uses strict CRLF separators. Headers default to an 8 KiB
+limit and messages to a 16 MiB limit. Both limits can be configured through the
+`maximumHeaderBytes` and `maximumMessageBytes` constructor arguments.
+
 For WebSocket connections, install `amphp/websocket` and pass its client to the
 message-oriented transport. Each text frame contains one complete JSON-RPC
 message; binary frames are rejected:
