@@ -9,19 +9,29 @@ permissions:
 
 jobs:
     tests:
+        name: PHP ${{ matrix.php-version }} with ${{ matrix.dependency-versions }} dependencies
         runs-on: ubuntu-latest
         strategy:
+            fail-fast: false
             matrix:
                 php-version: ['8.4', '8.5']
+                dependency-versions: ['highest']
+                include:
+                    - php-version: '8.4'
+                      dependency-versions: lowest
 
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
             - uses: shivammathur/setup-php@v2
               with:
                   php-version: ${{ matrix.php-version }}
                   coverage: none
-            - run: composer install --prefer-dist --no-interaction --no-progress
             - run: composer validate --strict
+            - if: matrix.dependency-versions == 'highest'
+              run: composer update --prefer-dist --no-interaction --no-progress
+            - if: matrix.dependency-versions == 'lowest'
+              run: composer update --prefer-lowest --prefer-dist --no-interaction --no-progress
+            - run: composer audit --locked
             - run: ./vendor/bin/php-cs-fixer fix --dry-run --diff --show-progress=none
             - run: ./vendor/bin/phpstan analyze --no-progress
             - run: ./vendor/bin/phpunit --no-progress
