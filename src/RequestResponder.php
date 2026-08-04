@@ -14,6 +14,8 @@ namespace Fabpot\JsonRpc;
 /**
  * Resolves a single inbound request, now or later.
  *
+ * @internal
+ *
  * @author Fabien Potencier <fabien@symfony.com>
  */
 final class RequestResponder

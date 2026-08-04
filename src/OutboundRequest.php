@@ -16,6 +16,8 @@ use Amp\Future;
 final class OutboundRequest
 {
     /**
+     * @internal
+     *
      * @param Future<mixed> $future
      */
     public function __construct(

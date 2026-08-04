@@ -23,4 +23,6 @@ final class JsonRpcError
     public const METHOD_NOT_FOUND = -32601;
     public const INVALID_PARAMS = -32602;
     public const INTERNAL_ERROR = -32603;
+
+    private function __construct() {}
 }

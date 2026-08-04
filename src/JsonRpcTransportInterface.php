@@ -22,6 +22,9 @@ interface JsonRpcTransportInterface
 {
     public function receive(?Cancellation $cancellation = null): ?string;
 
+    /**
+     * This method may be called concurrently; implementations must serialize writes.
+     */
     public function send(string $message): void;
 
     public function close(): void;

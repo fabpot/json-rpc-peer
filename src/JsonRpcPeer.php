@@ -59,12 +59,15 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         $this->onClose = new DeferredFuture();
     }
 
+    /** @internal */
     public function getConnectionCancellation(): Cancellation
     {
         return $this->connectionCancellation->getCancellation();
     }
 
     /**
+     * @internal
+     *
      * @param callable(JsonRpcMessage, RequestResponder|null): mixed $handler
      */
     public function onMessage(callable $handler): void
@@ -266,6 +269,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         return $futures;
     }
 
+    /** @internal */
     public function respond(int|float|string|null $id, mixed $result): void
     {
         $this->writer->write([
@@ -275,6 +279,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         ]);
     }
 
+    /** @internal */
     public function respondError(int|float|string|null $id, int $code, string $message, mixed $data = null): void
     {
         $error = [

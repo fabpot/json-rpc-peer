@@ -112,6 +112,8 @@ final class JsonRpcDispatcher
     }
 
     /**
+     * @internal
+     *
      * @return Future<mixed>|null
      */
     public function handle(JsonRpcMessage $message, ?RequestResponder $responder = null): ?Future
