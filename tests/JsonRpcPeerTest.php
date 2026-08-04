@@ -91,7 +91,9 @@ final class JsonRpcPeerTest extends TestCase
         yield 'null params' => ['{"jsonrpc":"2.0","id":4,"method":"ping","params":null}', 4];
         yield 'invalid id' => ['{"jsonrpc":"2.0","id":{},"method":"ping"}', null];
         yield 'non-finite id' => ['{"jsonrpc":"2.0","id":1e400,"method":"ping"}', null];
-        yield 'unsafe integer id' => ['{"jsonrpc":"2.0","id":9223372036854775809,"method":"ping"}', null];
+        yield 'integer above safe range' => ['{"jsonrpc":"2.0","id":9007199254740992,"method":"ping"}', null];
+        yield 'integer below safe range' => ['{"jsonrpc":"2.0","id":-9007199254740992,"method":"ping"}', null];
+        yield 'overflowing integer id' => ['{"jsonrpc":"2.0","id":9223372036854775809,"method":"ping"}', null];
         yield 'unsafe float id' => ['{"jsonrpc":"2.0","id":9007199254740993.0,"method":"ping"}', null];
         yield 'nested non-finite params' => ['{"jsonrpc":"2.0","id":5,"method":"ping","params":{"nested":{"value":1e400}}}', 5];
     }
@@ -114,6 +116,22 @@ final class JsonRpcPeerTest extends TestCase
             'id' => $expectedId,
             'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
         ]], $output->messages());
+    }
+
+    public function testAcceptsSafeIntegerBoundaryRequestIds(): void
+    {
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(
+            '{"jsonrpc":"2.0","id":9007199254740991,"method":"upper"}' . "\n"
+            . '{"jsonrpc":"2.0","id":-9007199254740991,"method":"lower"}'
+        ), new CapturingStream()));
+        $ids = [];
+        $peer->onMessage(static function (JsonRpcMessage $message) use (&$ids): void {
+            $ids[] = $message->getId();
+        });
+
+        $peer->listen();
+
+        $this->assertSame([9007199254740991, -9007199254740991], $ids);
     }
 
     public function testObjectWithSequentialNumericKeysIsNotTreatedAsBatch(): void
@@ -146,6 +164,20 @@ final class JsonRpcPeerTest extends TestCase
             'jsonrpc' => '2.0',
             'id' => null,
             'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ]], $output->messages());
+    }
+
+    public function testEmptyMessageProducesParseError(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer("\n"), $output));
+
+        $peer->listen();
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => ['code' => JsonRpcError::PARSE_ERROR, 'message' => 'Parse error'],
         ]], $output->messages());
     }
 
@@ -182,8 +214,9 @@ final class JsonRpcPeerTest extends TestCase
 
     public function testPeerExchangesCompleteMessagesWithTheTransport(): void
     {
+        $inbound = " \t{\"jsonrpc\":\"2.0\",\"method\":\"inbound\"}\r\n";
         $transport = $this->createMock(JsonRpcTransportInterface::class);
-        $transport->expects($this->exactly(2))->method('receive')->willReturn('{"jsonrpc":"2.0","method":"inbound"}', null);
+        $transport->expects($this->exactly(2))->method('receive')->willReturn($inbound, null);
         $transport->expects($this->once())->method('send')->with('{"jsonrpc":"2.0","method":"outbound"}');
         $logger = new class implements TrafficLoggerInterface {
             /** @var list<string> */
@@ -205,7 +238,7 @@ final class JsonRpcPeerTest extends TestCase
         $peer->notify('outbound');
         $peer->listen();
 
-        $this->assertSame(['{"jsonrpc":"2.0","method":"inbound"}'], $logger->inbound);
+        $this->assertSame([$inbound], $logger->inbound);
         $this->assertSame(['{"jsonrpc":"2.0","method":"outbound"}'], $logger->outbound);
     }
 
@@ -559,6 +592,20 @@ final class JsonRpcPeerTest extends TestCase
     public function testResponseWithFloatIdResolvesTheMatchingIntRequest(): void
     {
         $input = new ReadableBuffer('{"jsonrpc":"2.0","id":1.0,"result":"ok"}');
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
+        $response = $peer->request('ping');
+
+        $peer->listen();
+
+        $this->assertSame('ok', $response->await());
+    }
+
+    public function testResponseWithUnsafeIntegerIdIsIgnored(): void
+    {
+        $input = new ReadableBuffer(
+            '{"jsonrpc":"2.0","id":9007199254740992,"result":"unsafe"}' . "\n"
+            . '{"jsonrpc":"2.0","id":1,"result":"ok"}'
+        );
         $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
         $response = $peer->request('ping');
 

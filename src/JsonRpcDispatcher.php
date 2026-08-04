@@ -92,9 +92,10 @@ final class JsonRpcDispatcher
             }
 
             $id = $params[$idParameter];
-            if (!\is_int($id) && !\is_string($id) && null !== $id && (!\is_float($id) || !JsonRpcValues::isSafeFloatId($id))) {
+            if (!JsonRpcValues::isValidId($id)) {
                 return;
             }
+            /** @var int|float|string|null $id */
 
             $this->cancelRequest($id);
         });

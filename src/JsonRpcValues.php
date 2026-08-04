@@ -28,8 +28,17 @@ final class JsonRpcValues
         return get_debug_type($id) . ':' . $id;
     }
 
-    public static function isSafeFloatId(float $id): bool
+    public static function isValidId(mixed $id): bool
     {
+        return null === $id || \is_string($id) || ((\is_int($id) || \is_float($id)) && self::isSafeNumberId($id));
+    }
+
+    public static function isSafeNumberId(int|float $id): bool
+    {
+        if (\is_int($id)) {
+            return $id >= self::SAFE_INTEGER_MIN && $id <= self::SAFE_INTEGER_MAX;
+        }
+
         return is_finite($id) && ($id !== floor($id) || ($id >= self::SAFE_INTEGER_MIN && $id <= self::SAFE_INTEGER_MAX));
     }
 

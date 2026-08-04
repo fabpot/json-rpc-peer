@@ -107,11 +107,6 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     {
         try {
             while (null !== $message = $this->transport->receive()) {
-                $message = trim($message, " \t\r\n");
-                if ('' === $message) {
-                    continue;
-                }
-
                 try {
                     $this->processMessage($message);
                 } catch (ConnectionClosedException) {
@@ -143,6 +138,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     private function processMessage(string $message): void
     {
         $this->trafficLogger?->logInbound($message);
+        $message = trim($message, " \t\r\n");
 
         try {
             $decoded = json_decode($message, true, 512, \JSON_THROW_ON_ERROR);
@@ -435,8 +431,12 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         }
 
         $id = $data['id'] ?? null;
+        if (!JsonRpcValues::isValidId($id) || null === $id) {
+            return false;
+        }
+        /** @var int|float|string $id */
 
-        return (\is_int($id) || \is_float($id) || \is_string($id)) && isset($this->pendingRequests[$this->requestKey($id)]);
+        return isset($this->pendingRequests[$this->requestKey($id)]);
     }
 
     /**
@@ -449,9 +449,10 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         }
 
         $id = $data['id'];
-        if (!\is_int($id) && !\is_string($id) && (!\is_float($id) || !JsonRpcValues::isSafeFloatId($id))) {
+        if (!JsonRpcValues::isValidId($id) || null === $id) {
             return;
         }
+        /** @var int|float|string $id */
 
         $key = $this->requestKey($id);
         $deferred = $this->pendingRequests[$key] ?? null;
@@ -507,13 +508,10 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
     private function validResponseId(mixed $id): int|float|string|null
     {
-        if (\is_int($id) || \is_string($id)) {
-            return $id;
-        }
-
-        if (!\is_float($id) || !JsonRpcValues::isSafeFloatId($id)) {
+        if (!JsonRpcValues::isValidId($id)) {
             return null;
         }
+        /** @var int|float|string|null $id */
 
         return $id;
     }

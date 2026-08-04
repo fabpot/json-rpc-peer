@@ -56,7 +56,7 @@ final class JsonRpcMessage
 
         $hasId = \array_key_exists('id', $data);
         $id = $data['id'] ?? null;
-        if ($hasId && !\is_int($id) && !\is_string($id) && null !== $id && (!\is_float($id) || !JsonRpcValues::isSafeFloatId($id))) {
+        if ($hasId && !JsonRpcValues::isValidId($id)) {
             throw new InvalidArgumentException('The id member must be a safely representable finite number, string, or null.');
         }
         /** @var int|float|string|null $id */
