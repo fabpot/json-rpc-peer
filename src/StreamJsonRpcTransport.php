@@ -17,7 +17,9 @@ use Amp\ByteStream\StreamException;
 use Amp\ByteStream\WritableStream;
 use Amp\Cancellation;
 use Fabpot\JsonRpc\Exception\ConnectionClosedException;
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\RuntimeException;
+use Fabpot\JsonRpc\Exception\UnexpectedValueException;
 
 final class StreamJsonRpcTransport implements JsonRpcTransportInterface
 {
@@ -27,7 +29,12 @@ final class StreamJsonRpcTransport implements JsonRpcTransportInterface
     public function __construct(
         private readonly ReadableStream $input,
         private readonly WritableStream $output,
-    ) {}
+        private readonly int $maximumMessageBytes = 16777216,
+    ) {
+        if ($maximumMessageBytes < 1) {
+            throw new InvalidArgumentException('The line-delimited transport message limit must be a positive integer.');
+        }
+    }
 
     public function receive(?Cancellation $cancellation = null): ?string
     {
@@ -37,11 +44,14 @@ final class StreamJsonRpcTransport implements JsonRpcTransportInterface
                     return null;
                 }
 
-                $message = rtrim($this->buffer, "\r");
+                $message = $this->removeCarriageReturn($this->buffer);
                 $this->buffer = '';
+                $this->assertMessageSize($message);
 
                 return $message;
             }
+
+            $this->assertPendingMessageSize();
 
             try {
                 $chunk = $this->input->read($cancellation);
@@ -58,14 +68,19 @@ final class StreamJsonRpcTransport implements JsonRpcTransportInterface
             }
         }
 
-        $message = rtrim(substr($this->buffer, 0, $position), "\r");
+        $message = $this->removeCarriageReturn(substr($this->buffer, 0, $position));
         $this->buffer = substr($this->buffer, $position + 1);
+        $this->assertMessageSize($message);
 
         return $message;
     }
 
     public function send(string $message): void
     {
+        if (\strlen($message) > $this->maximumMessageBytes) {
+            throw new InvalidArgumentException('The JSON-RPC message exceeds the configured limit.');
+        }
+
         try {
             $this->output->write($message . "\n");
         } catch (ClosedException $e) {
@@ -81,5 +96,29 @@ final class StreamJsonRpcTransport implements JsonRpcTransportInterface
         if ($this->output !== $this->input) {
             $this->output->close();
         }
+    }
+
+    private function assertPendingMessageSize(): void
+    {
+        $length = \strlen($this->buffer);
+        if ($length <= $this->maximumMessageBytes
+            || ($length - 1 === $this->maximumMessageBytes && str_ends_with($this->buffer, "\r"))
+        ) {
+            return;
+        }
+
+        throw new UnexpectedValueException('The JSON-RPC message exceeds the configured limit.');
+    }
+
+    private function assertMessageSize(string $message): void
+    {
+        if (\strlen($message) > $this->maximumMessageBytes) {
+            throw new UnexpectedValueException('The JSON-RPC message exceeds the configured limit.');
+        }
+    }
+
+    private function removeCarriageReturn(string $message): string
+    {
+        return str_ends_with($message, "\r") ? substr($message, 0, -1) : $message;
     }
 }

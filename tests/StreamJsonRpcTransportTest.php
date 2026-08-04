@@ -15,7 +15,9 @@ use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableIterableStream;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\RuntimeException;
+use Fabpot\JsonRpc\Exception\UnexpectedValueException;
 use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use PHPUnit\Framework\TestCase;
 
@@ -38,6 +40,30 @@ final class StreamJsonRpcTransportTest extends TestCase
         $this->assertNull($transport->receive());
     }
 
+    public function testAcceptsMessageAtConfiguredLimitWithCrLfDelimiter(): void
+    {
+        $transport = new StreamJsonRpcTransport(
+            new ReadableIterableStream(["{}\r\n"]),
+            new CapturingStream(),
+            maximumMessageBytes: 2,
+        );
+
+        $this->assertSame('{}', $transport->receive());
+    }
+
+    public function testRejectsOversizedInboundMessage(): void
+    {
+        $transport = new StreamJsonRpcTransport(
+            new ReadableIterableStream(['abc']),
+            new CapturingStream(),
+            maximumMessageBytes: 2,
+        );
+
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage('message exceeds');
+        $transport->receive();
+    }
+
     public function testCancellationInterruptsPendingReceive(): void
     {
         $pipe = new Pipe(4096);
@@ -58,6 +84,26 @@ final class StreamJsonRpcTransportTest extends TestCase
         $transport->send('{"jsonrpc":"2.0","method":"ping"}');
 
         $this->assertSame([['jsonrpc' => '2.0', 'method' => 'ping']], $output->messages());
+    }
+
+    public function testRejectsOversizedOutboundMessage(): void
+    {
+        $transport = new StreamJsonRpcTransport(
+            new ReadableIterableStream([]),
+            new CapturingStream(),
+            maximumMessageBytes: 2,
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('message exceeds');
+        $transport->send('abc');
+    }
+
+    public function testRejectsInvalidMessageLimit(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('message limit must be a positive integer');
+        new StreamJsonRpcTransport(new ReadableIterableStream([]), new CapturingStream(), maximumMessageBytes: 0);
     }
 
     public function testWrapsReadFailures(): void
