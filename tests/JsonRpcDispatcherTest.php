@@ -36,7 +36,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             '{"jsonrpc":"2.0","id":1,"method":"echo","params":{"v":42}}',
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('echo', static fn(array $params): array => ['echoed' => $params['v']]);
+                $dispatcher->onRequest('echo', static fn(\stdClass $params): array => ['echoed' => $params->v]);
             },
         );
 
@@ -95,7 +95,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             '{"jsonrpc":"2.0","id":1,"method":"wait"}',
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation): string {
+                $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation): string {
                     try {
                         delay(10, cancellation: $cancellation);
                     } catch (CancelledException) {
@@ -116,7 +116,7 @@ final class JsonRpcDispatcherTest extends TestCase
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}",
             static function (JsonRpcDispatcher $dispatcher): void {
                 $count = 0;
-                $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use (&$count): string {
+                $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation) use (&$count): string {
                     $call = ++$count;
                     try {
                         delay(10, cancellation: $cancellation);
@@ -142,7 +142,7 @@ final class JsonRpcDispatcherTest extends TestCase
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"wait\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"cancel\",\"params\":{\"requestId\":1}}",
             static function (JsonRpcDispatcher $dispatcher) use (&$matched): void {
                 $count = 0;
-                $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use (&$count): string {
+                $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation) use (&$count): string {
                     $call = ++$count;
                     try {
                         delay(10, cancellation: $cancellation);
@@ -171,7 +171,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = new CapturingStream();
         $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"wait"}'), $output));
         $dispatcher = new JsonRpcDispatcher($peer);
-        $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use ($output): string {
+        $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation) use ($output): string {
             try {
                 delay(10, cancellation: $cancellation);
             } catch (CancelledException) {
@@ -193,7 +193,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             '[{"jsonrpc":"2.0","id":1,"method":"echo","params":{"v":42}}]',
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('echo', static fn(array $params): mixed => $params['v']);
+                $dispatcher->onRequest('echo', static fn(\stdClass $params): mixed => $params->v);
             },
         );
 
@@ -296,8 +296,8 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s1"}}',
             static function (JsonRpcDispatcher $dispatcher) use (&$seen): void {
-                $dispatcher->onNotification('session/cancel', static function (array $params) use (&$seen): void {
-                    $seen[] = $params['sessionId'];
+                $dispatcher->onNotification('session/cancel', static function (\stdClass $params) use (&$seen): void {
+                    $seen[] = $params->sessionId;
                 });
             },
         );
@@ -331,7 +331,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"run\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"cancel\",\"params\":{\"requestId\":7}}",
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('run', static function (array $params, Cancellation $cancellation): never {
+                $dispatcher->onRequest('run', static function (array|object|null $params, Cancellation $cancellation): never {
                     try {
                         $cancellation->throwIfRequested();
                     } catch (CancelledException) {
@@ -356,7 +356,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"run\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":9}}",
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('run', static function (array $params, Cancellation $cancellation): never {
+                $dispatcher->onRequest('run', static function (array|object|null $params, Cancellation $cancellation): never {
                     try {
                         $cancellation->throwIfRequested();
                     } catch (CancelledException) {
@@ -381,7 +381,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $output = $this->drive(
             "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"run\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"cancel\",\"params\":{\"requestId\":{}}}",
             static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('run', static function (array $params, Cancellation $cancellation): string {
+                $dispatcher->onRequest('run', static function (array|object|null $params, Cancellation $cancellation): string {
                     $cancellation->throwIfRequested();
 
                     return 'completed';
@@ -406,7 +406,7 @@ final class JsonRpcDispatcherTest extends TestCase
         );
         $dispatcher = new JsonRpcDispatcher($peer);
         $handled = 0;
-        $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use (&$handled): string {
+        $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation) use (&$handled): string {
             ++$handled;
             try {
                 delay(10, cancellation: $cancellation);
@@ -443,7 +443,7 @@ final class JsonRpcDispatcherTest extends TestCase
             maximumConcurrentInboundRequests: 1,
         );
         $dispatcher = new JsonRpcDispatcher($peer);
-        $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation): string {
+        $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation): string {
             try {
                 delay(10, cancellation: $cancellation);
             } catch (CancelledException) {

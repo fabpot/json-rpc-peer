@@ -218,53 +218,54 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         $message = trim($message, " \t\r\n");
 
         try {
-            $decoded = json_decode($message, true, 512, \JSON_THROW_ON_ERROR);
+            $decoded = json_decode($message, false, 512, \JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
             $this->respondError(null, JsonRpcError::PARSE_ERROR, 'Parse error');
 
             return;
         }
 
-        if (!\is_array($decoded)) {
-            $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
-
-            return;
-        }
-
-        if ('[' === $message[0]) {
+        if (\is_array($decoded)) {
             if (!array_is_list($decoded)) {
                 $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
 
                 return;
             }
+            /** @var list<mixed> $decoded */
 
             $this->handleBatch($decoded);
 
             return;
         }
-        /** @var array<string, mixed> $decoded */
+        if (!$decoded instanceof \stdClass) {
+            $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
 
-        if ($this->isResponse($decoded)) {
-            $this->handleResponse($decoded);
+            return;
+        }
+
+        /** @var array<string, mixed> $data */
+        $data = get_object_vars($decoded);
+        if ($this->isResponse($data)) {
+            $this->handleResponse($data);
         } else {
-            $this->handleRequest($decoded, $this);
+            $this->handleRequest($data, $this);
         }
     }
 
     /**
-     * @param array<array-key, mixed> $params
+     * @param array<array-key, mixed>|object|null $params
      *
      * @return Future<mixed>
      */
-    public function request(string $method, array $params = []): Future
+    public function request(string $method, array|object|null $params = null): Future
     {
         return $this->startRequest($method, $params)->getFuture();
     }
 
     /**
-     * @param array<array-key, mixed> $params
+     * @param array<array-key, mixed>|object|null $params
      */
-    public function startRequest(string $method, array $params = []): OutboundRequest
+    public function startRequest(string $method, array|object|null $params = null): OutboundRequest
     {
         if ($this->shutdownStarted) {
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
@@ -279,7 +280,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             'id' => $id,
             'method' => $method,
         ];
-        if ($params) {
+        if (null !== $params) {
             $payload['params'] = $params;
         }
 
@@ -317,7 +318,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
                 'jsonrpc' => '2.0',
                 'method' => $entry->getMethod(),
             ];
-            if ($entry->getParams()) {
+            if (null !== $entry->getParams()) {
                 $payload['params'] = $entry->getParams();
             }
 
@@ -376,9 +377,9 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     }
 
     /**
-     * @param array<array-key, mixed> $params
+     * @param array<array-key, mixed>|object|null $params
      */
-    public function notify(string $method, array $params = []): void
+    public function notify(string $method, array|object|null $params = null): void
     {
         if ($this->shutdownStarted) {
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
@@ -388,7 +389,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             'jsonrpc' => '2.0',
             'method' => $method,
         ];
-        if ($params) {
+        if (null !== $params) {
             $payload['params'] = $params;
         }
 
@@ -411,12 +412,13 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
         if ($this->isResponseBatch($entries)) {
             foreach ($entries as $response) {
-                if (!\is_array($response) || array_is_list($response)) {
+                if (!$response instanceof \stdClass) {
                     continue;
                 }
-                /** @var array<string, mixed> $response */
 
-                $this->handleResponse($response);
+                /** @var array<string, mixed> $data */
+                $data = get_object_vars($response);
+                $this->handleResponse($data);
             }
 
             return;
@@ -424,13 +426,14 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
         $sender = new BatchResponseSender($this->writer);
         foreach ($entries as $entry) {
-            if (!\is_array($entry) || array_is_list($entry)) {
+            if (!$entry instanceof \stdClass) {
                 $sender->addInvalidRequest();
                 continue;
             }
-            /** @var array<string, mixed> $entry */
 
-            $this->handleRequest($entry, $sender);
+            /** @var array<string, mixed> $data */
+            $data = get_object_vars($entry);
+            $this->handleRequest($data, $sender);
         }
         $sender->seal();
     }
@@ -508,17 +511,18 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     {
         $hasResponse = false;
         foreach ($entries as $entry) {
-            if (!\is_array($entry) || array_is_list($entry)) {
+            if (!$entry instanceof \stdClass) {
                 continue;
             }
-            /** @var array<string, mixed> $entry */
 
+            /** @var array<string, mixed> $data */
+            $data = get_object_vars($entry);
             try {
-                JsonRpcMessage::fromArray($entry);
+                JsonRpcMessage::fromArray($data);
 
                 return false;
             } catch (InvalidArgumentException) {
-                $hasResponse = $hasResponse || $this->isResponse($entry);
+                $hasResponse = $hasResponse || $this->isResponse($data);
             }
         }
 
@@ -590,7 +594,14 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         }
 
         $error = $data['error'];
-        if (!\is_array($error) || array_is_list($error) || !\is_int($error['code'] ?? null) || !\is_string($error['message'] ?? null) || JsonRpcValues::containsNonFiniteFloat($error['data'] ?? null)) {
+        if (!$error instanceof \stdClass) {
+            $this->failInvalidResponse($key, $deferred);
+
+            return;
+        }
+
+        $error = get_object_vars($error);
+        if (!\is_int($error['code'] ?? null) || !\is_string($error['message'] ?? null) || JsonRpcValues::containsNonFiniteFloat($error['data'] ?? null)) {
             $this->failInvalidResponse($key, $deferred);
 
             return;

@@ -58,8 +58,68 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertCount(2, $received);
         $this->assertSame('ping', $received[0]->getMethod());
         $this->assertSame(1, $received[0]->getId());
-        $this->assertSame(['x' => 1], $received[0]->getParams());
+        $firstParams = $received[0]->getParams();
+        $this->assertInstanceOf(\stdClass::class, $firstParams);
+        $this->assertSame(['x' => 1], get_object_vars($firstParams));
+        $secondParams = $received[1]->getParams();
+        $this->assertInstanceOf(\stdClass::class, $secondParams);
+        $this->assertSame([], get_object_vars($secondParams));
         $this->assertTrue($received[1]->isNotification());
+    }
+
+    public function testPreservesInboundJsonValueShapes(): void
+    {
+        $input = new ReadableBuffer(
+            '{"jsonrpc":"2.0","method":"omitted"}' . "\n"
+            . '{"jsonrpc":"2.0","method":"array","params":[]}' . "\n"
+            . '{"jsonrpc":"2.0","method":"object","params":{}}' . "\n"
+            . '{"jsonrpc":"2.0","method":"nested","params":{"items":[{"name":"one"}]}}' . "\n"
+        );
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
+        $params = [];
+        $peer->onMessage(static function (JsonRpcMessage $message) use (&$params): void {
+            $params[$message->getMethod()] = $message->getParams();
+        });
+
+        $peer->listen();
+
+        $this->assertNull($params['omitted']);
+        $this->assertSame([], $params['array']);
+        $this->assertInstanceOf(\stdClass::class, $params['object']);
+        $this->assertSame([], get_object_vars($params['object']));
+        $this->assertInstanceOf(\stdClass::class, $params['nested']);
+        $this->assertIsArray($params['nested']->items);
+        $this->assertInstanceOf(\stdClass::class, $params['nested']->items[0]);
+        $this->assertSame('one', $params['nested']->items[0]->name);
+    }
+
+    public function testPreservesOutboundParameterShapes(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+
+        $peer->request('request-omitted')->ignore();
+        $peer->request('request-array', [])->ignore();
+        $peer->request('request-object', new \stdClass())->ignore();
+        $peer->notify('omitted');
+        $peer->notify('array', []);
+        $peer->notify('object', new \stdClass());
+        $peer->batch(
+            new BatchNotification('batch-omitted'),
+            new BatchNotification('batch-array', []),
+            new BatchNotification('batch-object', new \stdClass()),
+        );
+
+        $this->assertSame(
+            '{"jsonrpc":"2.0","id":1,"method":"request-omitted"}' . "\n"
+            . '{"jsonrpc":"2.0","id":2,"method":"request-array","params":[]}' . "\n"
+            . '{"jsonrpc":"2.0","id":3,"method":"request-object","params":{}}' . "\n"
+            . '{"jsonrpc":"2.0","method":"omitted"}' . "\n"
+            . '{"jsonrpc":"2.0","method":"array","params":[]}' . "\n"
+            . '{"jsonrpc":"2.0","method":"object","params":{}}' . "\n"
+            . '[{"jsonrpc":"2.0","method":"batch-omitted"},{"jsonrpc":"2.0","method":"batch-array","params":[]},{"jsonrpc":"2.0","method":"batch-object","params":{}}]' . "\n",
+            $output->contents(),
+        );
     }
 
     public function testPeersExchangeARequestOverLiveDuplexStreams(): void
@@ -682,6 +742,26 @@ final class JsonRpcPeerTest extends TestCase
         ]]], $output->messages());
     }
 
+    public function testPreservesResponseResultShapes(): void
+    {
+        $input = new ReadableBuffer(
+            '{"jsonrpc":"2.0","id":1,"result":{"items":[{"name":"one"}]}}' . "\n"
+            . '{"jsonrpc":"2.0","id":2,"result":[]}'
+        );
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
+        $object = $peer->request('object');
+        $array = $peer->request('array');
+
+        $peer->listen();
+
+        $result = $object->await();
+        $this->assertInstanceOf(\stdClass::class, $result);
+        $this->assertIsArray($result->items);
+        $this->assertInstanceOf(\stdClass::class, $result->items[0]);
+        $this->assertSame('one', $result->items[0]->name);
+        $this->assertSame([], $array->await());
+    }
+
     public function testOutboundRequestsResolveOutOfOrder(): void
     {
         $input = new ReadableBuffer(
@@ -905,7 +985,9 @@ final class JsonRpcPeerTest extends TestCase
             $this->assertInstanceOf(ExceptionInterface::class, $e);
             $this->assertSame(JsonRpcError::INVALID_PARAMS, $e->getCode());
             $this->assertSame('Bad params', $e->getMessage());
-            $this->assertSame(['field' => 'value'], $e->getData());
+            $data = $e->getData();
+            $this->assertInstanceOf(\stdClass::class, $data);
+            $this->assertSame(['field' => 'value'], get_object_vars($data));
         }
     }
 

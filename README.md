@@ -132,22 +132,51 @@ Register handlers by method name. A request handler returns its result; the
 dispatcher sends it as the JSON-RPC response.
 
 ```php
-$dispatcher->onRequest('sum', function (array $params): array {
-    return ['total' => array_sum($params['values'])];
+$dispatcher->onRequest('sum', function (stdClass $params): stdClass {
+    return (object) ['total' => array_sum($params->values)];
 });
 ```
 
 A notification handler returns nothing because notifications have no response:
 
 ```php
-$dispatcher->onNotification('log', function (array $params): void {
-    fwrite(\STDERR, $params['message']."\n");
+$dispatcher->onNotification('log', function (stdClass $params): void {
+    fwrite(\STDERR, $params->message."\n");
 });
 ```
 
 Registering a second request or notification handler for the same method throws
 an `InvalidArgumentException`. Request and notification handlers have separate
 namespaces, so the same method may have one of each.
+
+### JSON values
+
+The peer preserves JSON value shapes when decoding messages:
+
+| JSON value | PHP value |
+| --- | --- |
+| object | `stdClass` |
+| array | list (`array`) |
+| string, number, boolean, or null | corresponding PHP scalar or `null` |
+
+This mapping applies recursively to parameters, results, and error data. Omitted
+`params` are passed to handlers as `null`, while explicit `[]` and `{}` become
+an empty PHP array and an empty `stdClass`, respectively. A handler can therefore
+narrow its parameter type to the shape defined by its method contract.
+
+Outbound requests, notifications, and batch entries accept
+`array|object|null` parameters. `null`, the default, omits the `params` member;
+pass `[]` to send an empty JSON array or `new stdClass()` to send an empty JSON
+object:
+
+```php
+$peer->notify('without-params');
+$peer->notify('positional', []);
+$peer->notify('named', new stdClass());
+```
+
+Objects and associative arrays are encoded according to PHP's `json_encode()`
+rules. Prefer `stdClass` for JSON objects when round-trip shape fidelity matters.
 
 ### Running the peer
 
@@ -204,16 +233,16 @@ parameters are valid JSON-RPC but invalid for that method:
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcError;
 
-$dispatcher->onRequest('divide', function (array $params): float|int {
-    if (!is_int($params['value'] ?? null) || !is_int($params['by'] ?? null)) {
+$dispatcher->onRequest('divide', function (stdClass $params): float|int {
+    if (!is_int($params->value ?? null) || !is_int($params->by ?? null)) {
         throw new JsonRpcException(JsonRpcError::INVALID_PARAMS, 'Expected integer "value" and "by" parameters.');
     }
 
-    if (0 === $params['by']) {
+    if (0 === $params->by) {
         throw new JsonRpcException(JsonRpcError::INVALID_PARAMS, 'Cannot divide by zero.');
     }
 
-    return $params['value'] / $params['by'];
+    return $params->value / $params->by;
 });
 ```
 
@@ -279,9 +308,9 @@ use Amp\Cancellation;
 use Amp\CancelledException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 
-$dispatcher->onRequest('run', function (array $params, Cancellation $cancellation): array {
+$dispatcher->onRequest('run', function (stdClass $params, Cancellation $cancellation): array {
     try {
-        return processItems($params['items'], $cancellation);
+        return processItems($params->items, $cancellation);
     } catch (CancelledException) {
         throw new JsonRpcException(-32800, 'Request canceled.');
     }
@@ -327,8 +356,8 @@ the number of matching active handlers, including concurrent requests sharing
 an ID:
 
 ```php
-$dispatcher->onNotification('custom/cancel', function (array $params) use ($dispatcher, $logger): void {
-    $count = $dispatcher->cancelRequest($params['request']['id']);
+$dispatcher->onNotification('custom/cancel', function (stdClass $params) use ($dispatcher, $logger): void {
+    $count = $dispatcher->cancelRequest($params->request->id);
     $logger->debug('Canceled JSON-RPC handlers.', ['count' => $count]);
 });
 ```
@@ -397,7 +426,7 @@ notifications, and batches throw the same exception.
 The peer can also push notifications to the other side at any time:
 
 ```php
-$peer->notify('progress', ['percent' => 42]);
+$peer->notify('progress', (object) ['percent' => 42]);
 ```
 
 #### Batches
@@ -412,7 +441,7 @@ use Fabpot\JsonRpc\BatchRequest;
 
 [$status, $configuration] = $peer->batch(
     new BatchRequest('workspace/status'),
-    new BatchNotification('progress', ['percent' => 42]),
+    new BatchNotification('progress', (object) ['percent' => 42]),
     new BatchRequest('workspace/configuration'),
 );
 

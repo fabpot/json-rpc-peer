@@ -14,11 +14,11 @@ namespace Fabpot\JsonRpc;
 final class BatchNotification
 {
     /**
-     * @param array<array-key, mixed> $params
+     * @param array<array-key, mixed>|object|null $params
      */
     public function __construct(
         private readonly string $method,
-        private readonly array $params = [],
+        private readonly array|object|null $params = null,
     ) {}
 
     public function getMethod(): string
@@ -27,9 +27,9 @@ final class BatchNotification
     }
 
     /**
-     * @return array<array-key, mixed>
+     * @return array<array-key, mixed>|object|null
      */
-    public function getParams(): array
+    public function getParams(): array|object|null
     {
         return $this->params;
     }

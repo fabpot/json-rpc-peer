@@ -48,6 +48,9 @@ final class JsonRpcValues
             return !is_finite($value);
         }
 
+        if (\is_object($value)) {
+            $value = get_object_vars($value);
+        }
         if (!\is_array($value)) {
             return false;
         }

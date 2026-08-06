@@ -28,10 +28,10 @@ use function Amp\async;
  */
 final class JsonRpcDispatcher
 {
-    /** @var array<string, callable(array<array-key, mixed>): mixed|callable(array<array-key, mixed>, Cancellation): mixed> */
+    /** @var array<string, callable> */
     private array $requestHandlers = [];
 
-    /** @var array<string, callable(array<array-key, mixed>): void> */
+    /** @var array<string, callable> */
     private array $notificationHandlers = [];
 
     /** @var array<string, array<int, DeferredCancellation>> */
@@ -54,7 +54,9 @@ final class JsonRpcDispatcher
     }
 
     /**
-     * @param callable(array<array-key, mixed>): mixed|callable(array<array-key, mixed>, Cancellation): mixed $handler
+     * @template TParams of array<array-key, mixed>|object|null
+     *
+     * @param callable(TParams): mixed|callable(TParams, Cancellation): mixed $handler
      */
     public function onRequest(string $method, callable $handler): void
     {
@@ -66,7 +68,9 @@ final class JsonRpcDispatcher
     }
 
     /**
-     * @param callable(array<array-key, mixed>): void $handler
+     * @template TParams of array<array-key, mixed>|object|null
+     *
+     * @param callable(TParams): void $handler
      */
     public function onNotification(string $method, callable $handler): void
     {
@@ -87,12 +91,17 @@ final class JsonRpcDispatcher
 
     public function onCancel(string $method, string $idParameter): void
     {
-        $this->onNotification($method, function (array $params) use ($idParameter): void {
-            if (!\array_key_exists($idParameter, $params)) {
+        $this->onNotification($method, function (array|object|null $params) use ($idParameter): void {
+            if (\is_object($params)) {
+                if (!property_exists($params, $idParameter)) {
+                    return;
+                }
+                $id = $params->{$idParameter};
+            } elseif (\is_array($params) && \array_key_exists($idParameter, $params)) {
+                $id = $params[$idParameter];
+            } else {
                 return;
             }
-
-            $id = $params[$idParameter];
             if (!JsonRpcValues::isValidId($id)) {
                 return;
             }
