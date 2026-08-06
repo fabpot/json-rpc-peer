@@ -46,7 +46,17 @@ sequenceDiagram
 ## Spec conformance
 
 The peer implements JSON-RPC 2.0, including mixed request and notification
-batches.
+batches. The test suite covers every example in section 7 of the specification.
+
+String and numeric request IDs are kept distinct. An omitted ID identifies a
+notification; an explicit `null` ID remains a request, although the specification
+discourages null IDs. Numeric IDs must be finite, and integer-valued IDs must be
+within JavaScript's interoperable safe-integer range
+`[-9007199254740991, 9007199254740991]`. Integral float and integer forms such as
+`1.0` and `1` correlate to the same request. Fractional numeric IDs are accepted,
+but the specification discourages them; use string IDs for exact decimal values
+or integers outside the safe range. Locally generated outbound IDs are positive
+integers starting at 1.
 
 ## Why this exists
 

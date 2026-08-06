@@ -10,6 +10,7 @@
 - Enforce configurable inbound and outbound WebSocket message limits
 - Preserve JSON object, array, and omitted parameter shapes in public values
 - Add outbound request cancellation and timeout cleanup
+- Cover the JSON-RPC 2.0 examples and align standard error responses
 
 ## 0.5.0 - 2026-07-30
 

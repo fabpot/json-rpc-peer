@@ -621,7 +621,7 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame([[
             'jsonrpc' => '2.0',
             'id' => 3,
-            'error' => ['code' => JsonRpcError::METHOD_NOT_FOUND, 'message' => 'Method not found: missing'],
+            'error' => ['code' => JsonRpcError::METHOD_NOT_FOUND, 'message' => 'Method not found'],
         ]], $output);
     }
 

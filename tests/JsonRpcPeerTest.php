@@ -544,7 +544,11 @@ final class JsonRpcPeerTest extends TestCase
             'id' => null,
             'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
         ];
-        $this->assertSame([[...array_fill(0, 3, $error)]], $output->messages());
+        $this->assertSame([[$error, $error, [
+            'jsonrpc' => '2.0',
+            'id' => 7,
+            'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
+        ]]], $output->messages());
     }
 
     public function testInvalidBatchEntryWithMethodDoesNotTurnResponseArrayIntoRequestBatch(): void
@@ -574,7 +578,7 @@ final class JsonRpcPeerTest extends TestCase
             'result' => 'ok',
         ], [
             'jsonrpc' => '2.0',
-            'id' => null,
+            'id' => 2,
             'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
         ]]], $output->messages());
     }
@@ -591,7 +595,7 @@ final class JsonRpcPeerTest extends TestCase
             'id' => 1,
             'error' => [
                 'code' => JsonRpcError::METHOD_NOT_FOUND,
-                'message' => 'Method not found: request',
+                'message' => 'Method not found',
             ],
         ]], $output->messages());
     }
@@ -608,7 +612,7 @@ final class JsonRpcPeerTest extends TestCase
             'id' => 1,
             'error' => [
                 'code' => JsonRpcError::METHOD_NOT_FOUND,
-                'message' => 'Method not found: request',
+                'message' => 'Method not found',
             ],
         ], [
             'jsonrpc' => '2.0',

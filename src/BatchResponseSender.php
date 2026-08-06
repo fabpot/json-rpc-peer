@@ -29,11 +29,11 @@ final class BatchResponseSender implements ResponseSenderInterface
         ++$this->pendingResponses;
     }
 
-    public function addInvalidRequest(): void
+    public function addInvalidRequest(int|float|string|null $id = null): void
     {
         $this->responses[] = [
             'jsonrpc' => '2.0',
-            'id' => null,
+            'id' => $id,
             'error' => [
                 'code' => JsonRpcError::INVALID_REQUEST,
                 'message' => 'Invalid Request',

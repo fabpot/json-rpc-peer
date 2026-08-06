@@ -147,7 +147,7 @@ final class JsonRpcDispatcher
         $responder ??= new RequestResponder($this->peer, $message->getId());
         $handler = $this->requestHandlers[$method] ?? null;
         if (null === $handler) {
-            $responder->reject(JsonRpcError::METHOD_NOT_FOUND, \sprintf('Method not found: %s', $method));
+            $responder->reject(JsonRpcError::METHOD_NOT_FOUND, 'Method not found');
 
             return null;
         }

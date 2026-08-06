@@ -500,7 +500,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             $message = JsonRpcMessage::fromArray($entry);
         } catch (InvalidArgumentException) {
             if ($sender instanceof BatchResponseSender) {
-                $sender->addInvalidRequest();
+                $sender->addInvalidRequest($this->validResponseId($entry['id'] ?? null));
             } else {
                 $sender->respondError($this->validResponseId($entry['id'] ?? null), JsonRpcError::INVALID_REQUEST, 'Invalid Request');
             }
@@ -518,7 +518,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
         if (null === $this->messageHandler) {
             if (!$message->isNotification()) {
-                $responder->reject(JsonRpcError::METHOD_NOT_FOUND, \sprintf('Method not found: %s', $message->getMethod()));
+                $responder->reject(JsonRpcError::METHOD_NOT_FOUND, 'Method not found');
             }
 
             return;
