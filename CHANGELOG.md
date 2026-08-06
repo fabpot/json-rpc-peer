@@ -12,6 +12,7 @@
 - Add outbound request cancellation and timeout cleanup
 - Cover the JSON-RPC 2.0 examples and align standard error responses
 - Exercise stream and content-length framing across deterministic byte partitions
+- Declare and test supported optional dependency ranges and no-dev installation
 
 ## 0.5.0 - 2026-07-30
 

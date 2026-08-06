@@ -35,3 +35,46 @@ jobs:
             - run: ./vendor/bin/php-cs-fixer fix --dry-run --diff --show-progress=none
             - run: ./vendor/bin/phpstan analyze --no-progress
             - run: ./vendor/bin/phpunit --no-progress
+
+    production:
+        name: Production dependencies only
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.4'
+                  coverage: none
+            - run: composer validate --strict
+            - run: composer update --no-dev --prefer-dist --no-interaction --no-progress
+            - run: composer audit --locked --no-dev
+            - run: composer check-platform-reqs --no-dev
+            - run: php tests/no-dev-smoke.php
+
+    optional-dependencies:
+        name: ${{ matrix.package }} ${{ matrix.constraint }}
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - package: amphp/websocket
+                      constraint: '2.0.0'
+                    - package: amphp/websocket
+                      constraint: '^2.0'
+                    - package: psr/log
+                      constraint: '1.0.0'
+                    - package: psr/log
+                      constraint: '2.0.0'
+                    - package: psr/log
+                      constraint: '^3.0'
+        steps:
+            - uses: actions/checkout@v7
+            - uses: shivammathur/setup-php@v2
+              with:
+                  php-version: '8.4'
+                  coverage: none
+            - run: composer update --with "${{ matrix.package }}:${{ matrix.constraint }}" --prefer-dist --no-interaction --no-progress
+            - run: composer audit --locked
+            - run: ./vendor/bin/phpstan analyze --no-progress
+            - run: ./vendor/bin/phpunit --no-progress

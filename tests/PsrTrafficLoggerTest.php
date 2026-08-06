@@ -13,14 +13,15 @@ namespace Fabpot\JsonRpc\Tests;
 
 use Fabpot\JsonRpc\PsrTrafficLogger;
 use PHPUnit\Framework\TestCase;
-use Psr\Log\AbstractLogger;
+use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
 
 final class PsrTrafficLoggerTest extends TestCase
 {
     public function testLogsRedactedInboundAndOutboundMessages(): void
     {
-        $logger = $this->createLogger();
+        $records = [];
+        $logger = $this->createLogger($records);
         $trafficLogger = new PsrTrafficLogger($logger, ['authorization', 'customSecret']);
 
         $trafficLogger->logInbound('{"authorization":"Bearer token","nested":{"customSecret":"secret","password":"password","url":"https://user:pass@example.com/path"}}');
@@ -32,12 +33,13 @@ final class PsrTrafficLoggerTest extends TestCase
                 'message' => '{"authorization":"[redacted]","nested":{"customSecret":"[redacted]","password":"[redacted]","url":"https://[redacted]@example.com/path"}}',
             ]],
             [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'outbound', 'message' => '{"result":"pong"}']],
-        ], $logger->records);
+        ], $records);
     }
 
     public function testDoesNotLogPayloadWhenRedactionFails(): void
     {
-        $logger = $this->createLogger();
+        $records = [];
+        $logger = $this->createLogger($records);
         $trafficLogger = new PsrTrafficLogger($logger);
 
         $trafficLogger->logInbound('{"password":"secret","value":1e400}');
@@ -46,31 +48,26 @@ final class PsrTrafficLoggerTest extends TestCase
         $this->assertSame([
             [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'inbound', 'message' => '[redaction failed]']],
             [LogLevel::DEBUG, 'JSON-RPC {direction}: {message}', ['direction' => 'outbound', 'message' => '[redaction failed]']],
-        ], $logger->records);
+        ], $records);
     }
 
     /**
-     * @return AbstractLogger&object{records: list<array{mixed, string, array<string, mixed>}>}
+     * @param list<array{mixed, string, array<string, mixed>}> $records
+     * @param-out list<array{mixed, string, array<string, mixed>}> $records
      */
-    private function createLogger(): AbstractLogger
+    private function createLogger(array &$records): LoggerInterface
     {
-        return new class extends AbstractLogger {
-            /** @var list<array{mixed, string, array<string, mixed>}> */
-            public array $records = [];
-
-            /**
-             * @param mixed                $level
-             * @param mixed                $message
-             * @param array<string, mixed> $context
-             */
-            public function log($level, $message, array $context = []): void
-            {
-                if (!\is_string($message) && !$message instanceof \Stringable) {
-                    throw new \InvalidArgumentException('Expected a string or Stringable message.');
-                }
-
-                $this->records[] = [$level, (string) $message, $context];
+        $records = [];
+        $logger = $this->createStub(LoggerInterface::class);
+        $logger->method('debug')->willReturnCallback(static function (mixed $message, array $context = []) use (&$records): void {
+            if (!\is_string($message) && !$message instanceof \Stringable) {
+                throw new \InvalidArgumentException('Expected a string or Stringable message.');
             }
-        };
+
+            $records[] = [LogLevel::DEBUG, (string) $message, $context];
+        });
+
+        return $logger;
     }
+
 }

@@ -114,9 +114,9 @@ as case-insensitive, and uses strict CRLF separators. Headers default to an 8
 KiB limit and messages to a 16 MiB limit. Both limits can be configured through
 the `maximumHeaderBytes` and `maximumMessageBytes` constructor arguments.
 
-For WebSocket connections, install `amphp/websocket` and pass its client to the
-message-oriented transport. Each text message contains one complete JSON-RPC
-message; binary messages are rejected:
+For WebSocket connections, install `amphp/websocket:^2` and pass its client to
+the message-oriented transport. Each text message contains one complete
+JSON-RPC message; binary messages are rejected:
 
 ```php
 use Fabpot\JsonRpc\JsonRpcPeer;
@@ -187,6 +187,9 @@ $peer->notify('named', new stdClass());
 
 Objects and associative arrays are encoded according to PHP's `json_encode()`
 rules. Prefer `stdClass` for JSON objects when round-trip shape fidelity matters.
+An object used as top-level parameters must serialize to a JSON object; an
+object with a scalar `JsonSerializable` representation is not valid JSON-RPC
+parameters.
 
 ### Running the peer
 
@@ -538,5 +541,5 @@ $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output), $trafficLog
 
 The adapter always redacts common credential keys such as `authorization`,
 `token`, `password`, and `secret`. Redaction is intentionally conservative and
-does not inspect arbitrary text for embedded credentials. Install `psr/log` to
-use this optional adapter.
+does not inspect arbitrary text for embedded credentials. Install
+`psr/log:^1|^2|^3` to use this optional adapter.
