@@ -127,6 +127,116 @@ final class JsonRpcPeerTest extends TestCase
         );
     }
 
+    public function testRejectsObjectParametersThatSerializeToScalarValues(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+        try {
+            $peer->request('invalid', self::scalarParams());
+            $this->fail('Scalar request parameters were accepted.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertSame('JSON-RPC params must encode as an array or object.', $e->getMessage());
+        }
+        $this->assertSame('', $output->contents());
+        $request = $peer->startRequest('next');
+        $request->getFuture()->ignore();
+        $this->assertSame(1, $request->getId());
+
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+        try {
+            $peer->notify('invalid', self::scalarParams());
+            $this->fail('Scalar notification parameters were accepted.');
+        } catch (InvalidArgumentException) {
+        }
+        $this->assertSame('', $output->contents());
+
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+        try {
+            $peer->batch(
+                new BatchRequest('valid'),
+                new BatchNotification('invalid', self::scalarParams()),
+            );
+            $this->fail('Scalar batch parameters were accepted.');
+        } catch (InvalidArgumentException) {
+        }
+        $this->assertSame('', $output->contents());
+        $request = $peer->startRequest('next');
+        $request->getFuture()->ignore();
+        $this->assertSame(1, $request->getId());
+    }
+
+    public function testNormalizesStructuredJsonSerializableParametersOnce(): void
+    {
+        $params = new class implements \JsonSerializable {
+            private int $calls = 0;
+
+            public function jsonSerialize(): \stdClass
+            {
+                ++$this->calls;
+
+                return (object) ['value' => 42];
+            }
+
+            public function getCalls(): int
+            {
+                return $this->calls;
+            }
+        };
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+
+        $peer->notify('valid', $params);
+
+        $this->assertSame(1, $params->getCalls());
+        $this->assertSame('{"jsonrpc":"2.0","method":"valid","params":{"value":42}}' . "\n", $output->contents());
+    }
+
+    public function testNormalizesJsonSerializableParameterChainsByObjectIdentity(): void
+    {
+        $params = new class (8) implements \JsonSerializable {
+            public function __construct(
+                private readonly int $remaining,
+            ) {}
+
+            public function jsonSerialize(): object
+            {
+                if ($this->remaining > 0) {
+                    return new self($this->remaining - 1);
+                }
+
+                return (object) ['value' => 42];
+            }
+        };
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+
+        $peer->notify('valid', $params);
+
+        $this->assertSame('{"jsonrpc":"2.0","method":"valid","params":{"value":42}}' . "\n", $output->contents());
+    }
+
+    public function testRejectsUnboundedJsonSerializableParameterChains(): void
+    {
+        $params = new class implements \JsonSerializable {
+            public function jsonSerialize(): object
+            {
+                return new self();
+            }
+        };
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('JSON-RPC params must encode as an array or object.');
+        try {
+            $peer->notify('invalid', $params);
+        } finally {
+            $this->assertSame('', $output->contents());
+        }
+    }
+
     public function testPeersExchangeARequestOverLiveDuplexStreams(): void
     {
         $clientToServer = new Pipe(4096);
@@ -947,7 +1057,7 @@ final class JsonRpcPeerTest extends TestCase
         ));
 
         [$cancelled, $active] = $peer->batch(
-            new BatchRequest('cancelled', cancellation: $cancellation->getCancellation()),
+            new BatchRequest('cancelled', self::scalarParams(), $cancellation->getCancellation()),
             new BatchNotification('note'),
             new BatchRequest('active'),
         );
@@ -1379,6 +1489,16 @@ final class JsonRpcPeerTest extends TestCase
             'error' => ['code' => JsonRpcError::PARSE_ERROR, 'message' => 'Parse error'],
         ]], $output->messages());
         $this->assertSame(['ping'], $seen, 'A malformed line must not stop the peer from reading the next one.');
+    }
+
+    private static function scalarParams(): \JsonSerializable
+    {
+        return new class implements \JsonSerializable {
+            public function jsonSerialize(): string
+            {
+                return 'invalid';
+            }
+        };
     }
 
     /**

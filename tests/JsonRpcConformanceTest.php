@@ -35,9 +35,17 @@ final class JsonRpcConformanceTest extends TestCase
             '{"jsonrpc":"2.0","method":"subtract","params":[42,23],"id":1}',
             [['jsonrpc' => '2.0', 'id' => 1, 'result' => 19]],
         ];
+        yield 'positional parameters reversed' => [
+            '{"jsonrpc":"2.0","method":"subtract","params":[23,42],"id":2}',
+            [['jsonrpc' => '2.0', 'id' => 2, 'result' => -19]],
+        ];
         yield 'named parameters' => [
             '{"jsonrpc":"2.0","method":"subtract","params":{"subtrahend":23,"minuend":42},"id":3}',
             [['jsonrpc' => '2.0', 'id' => 3, 'result' => 19]],
+        ];
+        yield 'named parameters reversed' => [
+            '{"jsonrpc":"2.0","method":"subtract","params":{"minuend":42,"subtrahend":23},"id":4}',
+            [['jsonrpc' => '2.0', 'id' => 4, 'result' => 19]],
         ];
         yield 'notification' => [
             '{"jsonrpc":"2.0","method":"update","params":[1,2,3,4,5]}',

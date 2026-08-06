@@ -187,9 +187,9 @@ $peer->notify('named', new stdClass());
 
 Objects and associative arrays are encoded according to PHP's `json_encode()`
 rules. Prefer `stdClass` for JSON objects when round-trip shape fidelity matters.
-An object used as top-level parameters must serialize to a JSON object; an
-object with a scalar `JsonSerializable` representation is not valid JSON-RPC
-parameters.
+An object used as top-level parameters must serialize to a JSON object or array.
+A structured `JsonSerializable` representation is normalized once before writing;
+a scalar representation is rejected as invalid JSON-RPC parameters.
 
 ### Running the peer
 

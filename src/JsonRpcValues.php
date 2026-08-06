@@ -11,6 +11,8 @@
 
 namespace Fabpot\JsonRpc;
 
+use Fabpot\JsonRpc\Exception\InvalidArgumentException;
+
 /** @internal */
 final class JsonRpcValues
 {
@@ -40,6 +42,35 @@ final class JsonRpcValues
         }
 
         return is_finite($id) && ($id !== floor($id) || ($id >= self::SAFE_INTEGER_MIN && $id <= self::SAFE_INTEGER_MAX));
+    }
+
+    /**
+     * @param array<array-key, mixed>|object|null $params
+     *
+     * @return array<array-key, mixed>|object|null
+     */
+    public static function normalizeParams(array|object|null $params): array|object|null
+    {
+        if (null === $params || \is_array($params)) {
+            return $params;
+        }
+
+        /** @var \SplObjectStorage<object, null> $serializedObjects */
+        $serializedObjects = new \SplObjectStorage();
+        $serializedObjectCount = 0;
+        while ($params instanceof \JsonSerializable) {
+            if (++$serializedObjectCount > 512 || $serializedObjects->offsetExists($params)) {
+                throw new InvalidArgumentException('JSON-RPC params must encode as an array or object.');
+            }
+            $serializedObjects->offsetSet($params);
+            $params = $params->jsonSerialize();
+        }
+
+        if (!\is_array($params) && (!\is_object($params) || $params instanceof \UnitEnum)) {
+            throw new InvalidArgumentException('JSON-RPC params must encode as an array or object.');
+        }
+
+        return $params;
     }
 
     public static function containsNonFiniteFloat(mixed $value): bool

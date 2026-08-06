@@ -272,6 +272,8 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         }
 
         $cancellation?->throwIfRequested();
+        $params = JsonRpcValues::normalizeParams($params);
+        $cancellation?->throwIfRequested();
         $id = $this->nextRequestId++;
         $key = $this->requestKey($id);
         $pendingRequest = $this->registerPendingRequest($key, $cancellation);
@@ -314,18 +316,34 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
 
+        $normalizedParams = [];
+        foreach ($entries as $index => $entry) {
+            if ($entry instanceof BatchRequest) {
+                try {
+                    $entry->getCancellation()?->throwIfRequested();
+                } catch (CancelledException) {
+                    $normalizedParams[$index] = null;
+
+                    continue;
+                }
+            }
+
+            $normalizedParams[$index] = JsonRpcValues::normalizeParams($entry->getParams());
+        }
+
         /** @var list<array{payload: array<string, mixed>}|array{payload: array<string, mixed>, key: string, pendingRequest: PendingRequest, cancellation: Cancellation|null}> $records */
         $records = [];
         /** @var list<array{string|null, PendingRequest}> $createdRequests */
         $createdRequests = [];
         $futures = [];
-        foreach ($entries as $entry) {
+        foreach ($entries as $index => $entry) {
+            $params = $normalizedParams[$index];
             $payload = [
                 'jsonrpc' => '2.0',
                 'method' => $entry->getMethod(),
             ];
-            if (null !== $entry->getParams()) {
-                $payload['params'] = $entry->getParams();
+            if (null !== $params) {
+                $payload['params'] = $params;
             }
 
             if (!$entry instanceof BatchRequest) {
@@ -438,6 +456,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
 
+        $params = JsonRpcValues::normalizeParams($params);
         $payload = [
             'jsonrpc' => '2.0',
             'method' => $method,
