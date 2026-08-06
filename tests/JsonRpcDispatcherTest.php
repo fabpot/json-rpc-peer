@@ -16,11 +16,13 @@ use Amp\Cancellation;
 use Amp\CancelledException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\Exception\RuntimeException;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
 use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
 use Fabpot\JsonRpc\StreamJsonRpcTransport;
+use Fabpot\JsonRpc\TrafficLoggerInterface;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\delay;
@@ -387,6 +389,119 @@ final class JsonRpcDispatcherTest extends TestCase
         );
 
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 11, 'result' => 'completed']], $output);
+    }
+
+    public function testResponseWriteFailureIsNotConvertedToAHandlerError(): void
+    {
+        $output = new CapturingStream();
+        $output->failNextWrite();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"run"}'), $output));
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('run', static fn(): string => 'correct');
+        $reportedErrors = [];
+        $dispatcher->onUnhandledError(static function (\Throwable $e) use (&$reportedErrors): void {
+            $reportedErrors[] = $e;
+        });
+
+        try {
+            $peer->listen();
+            $this->fail('The response write failure was not raised.');
+        } catch (RuntimeException $e) {
+            $this->assertSame('Failed to write to the JSON-RPC connection.', $e->getMessage());
+        }
+
+        $this->assertSame([], $reportedErrors);
+        $this->assertSame([], $output->messages());
+    }
+
+    public function testResponseLoggerFailureIsNotConvertedToAHandlerError(): void
+    {
+        $failure = new \LogicException('Logger failed.');
+        $logger = new class ($failure) implements TrafficLoggerInterface {
+            public function __construct(
+                private readonly \Throwable $failure,
+            ) {}
+
+            public function logInbound(string $line): void {}
+
+            public function logOutbound(string $line): void
+            {
+                throw $this->failure;
+            }
+        };
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"run"}'), new CapturingStream()),
+            $logger,
+        );
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('run', static fn(): string => 'correct');
+        $reportedErrors = [];
+        $dispatcher->onUnhandledError(static function (\Throwable $e) use (&$reportedErrors): void {
+            $reportedErrors[] = $e;
+        });
+
+        try {
+            $peer->listen();
+            $this->fail('The logger failure was not raised.');
+        } catch (\LogicException $e) {
+            $this->assertSame($failure, $e);
+        }
+
+        $this->assertSame([], $reportedErrors);
+    }
+
+    public function testOversizedBatchResponseFailsTheListenerWithoutRetrying(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(
+            new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","id":2,"method":"second"}]'),
+            $output,
+            maximumMessageBytes: 150,
+        ));
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('first', static fn(): string => str_repeat('x', 80));
+        $dispatcher->onRequest('second', static fn(): string => str_repeat('x', 80));
+        $reportedErrors = [];
+        $dispatcher->onUnhandledError(static function (\Throwable $e) use (&$reportedErrors): void {
+            $reportedErrors[] = $e;
+        });
+
+        try {
+            $peer->listen();
+            $this->fail('The oversized batch response was not raised.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertSame('The JSON-RPC message exceeds the configured limit.', $e->getMessage());
+        }
+
+        $this->assertSame([], $reportedErrors);
+        $this->assertSame([], $output->messages());
+    }
+
+    public function testListenWaitsForSiblingHandlersAfterAResponseFailure(): void
+    {
+        $output = new CapturingStream();
+        $output->failNextWrite();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(
+            '{"jsonrpc":"2.0","id":1,"method":"first"}' . "\n"
+            . '{"jsonrpc":"2.0","id":2,"method":"second"}'
+        ), $output));
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('first', static fn(): string => 'first');
+        $secondFinished = false;
+        $dispatcher->onRequest('second', static function () use (&$secondFinished): string {
+            delay(0.01);
+            $secondFinished = true;
+
+            return 'second';
+        });
+
+        try {
+            $peer->listen();
+            $this->fail('The response write failure was not raised.');
+        } catch (RuntimeException) {
+        }
+
+        $this->assertTrue($secondFinished);
     }
 
     public function testUnknownMethodReturnsMethodNotFound(): void

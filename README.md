@@ -117,9 +117,10 @@ $peer = new JsonRpcPeer(new WebsocketJsonRpcTransport($websocketClient));
 
 Custom transports can implement `JsonRpcTransportInterface`. `receive()` returns
 one complete JSON-RPC message or `null` when the connection closes; `send()`
-accepts one complete JSON-RPC message. The peer takes ownership of the supplied
-transport. Call `$peer->close()` rather than closing its underlying streams or
-WebSocket directly.
+accepts one complete JSON-RPC message and must serialize concurrent calls.
+`close()` must be idempotent and unblock a pending `receive()`. The peer takes
+ownership of the supplied transport. Call `$peer->close()` rather than closing
+its underlying streams or WebSocket directly.
 
 ### Handling requests and notifications
 
@@ -146,9 +147,10 @@ namespaces, so the same method may have one of each.
 
 ### Running the peer
 
-After registering handlers, call `listen()`. It reads and dispatches messages
-until the transport closes. It then requests cancellation of active request
-handlers and waits for them to finish before returning:
+After registering handlers, call `listen()` once. It reads and dispatches
+messages until the transport closes. It then requests cancellation of active
+request handlers, waits for them to finish, and closes the owned transport
+before returning:
 
 ```php
 $peer->listen();
@@ -362,11 +364,11 @@ $listener->await();
 
 Calling `close()` closes the owned transport, including its underlying streams
 or WebSocket, and stops `listen()`. A remote transport closure stops it as well.
-The peer implements `Amp\Closable`: `isClosed()` reports whether listening has
-stopped, and `onClose()` registers callbacks for local or remote closure.
-When the transport closes, all outstanding outbound requests fail with a
-`Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests throw the
-same exception after the listener stops.
+The peer implements `Amp\Closable`: `isClosed()` reports whether the peer has
+fully closed, and `onClose()` registers callbacks for local or remote closure.
+When shutdown begins, all outstanding outbound requests fail with a
+`Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests,
+notifications, and batches throw the same exception.
 
 The peer can also push notifications to the other side at any time:
 

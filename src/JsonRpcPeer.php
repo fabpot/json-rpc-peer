@@ -12,6 +12,7 @@
 namespace Fabpot\JsonRpc;
 
 use Amp\Cancellation;
+use Amp\CancelledException;
 use Amp\Closable;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
@@ -20,8 +21,10 @@ use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
+use Fabpot\JsonRpc\Exception\RuntimeException;
 
 use function Amp\async;
+use function Amp\Future\awaitAll;
 
 /**
  * Minimal bidirectional JSON-RPC 2.0 peer.
@@ -38,14 +41,18 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     /** @var DeferredFuture<void> */
     private readonly DeferredFuture $onClose;
     private int $nextRequestId = 1;
-    private bool $listenerStopped = false;
+    private int $nextInboundRequestId = 1;
+    private bool $listenerStarted = false;
+    private bool $shutdownStarted = false;
+    private bool $closed = false;
     private bool $transportClosed = false;
 
     /** @var array<string, DeferredFuture<mixed>> */
     private array $pendingRequests = [];
 
-    /** @var array<string, Future<mixed>> */
+    /** @var array<int, Future<mixed>> */
     private array $inboundRequests = [];
+    private ?\Throwable $inboundRequestError = null;
 
     /**
      * Takes ownership of the transport and closes it when close() is called.
@@ -77,28 +84,66 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
     public function listen(): void
     {
-        async($this->listenLoop(...))->await();
+        if ($this->listenerStarted) {
+            throw new RuntimeException('The JSON-RPC listener has already been started.');
+        }
+        if ($this->shutdownStarted) {
+            throw new ConnectionClosedException('The JSON-RPC connection is closed.');
+        }
 
-        while ($this->inboundRequests) {
-            foreach ($this->inboundRequests as $future) {
-                $future->await();
+        $this->listenerStarted = true;
+        $error = null;
+
+        try {
+            try {
+                async($this->listenLoop(...))->await();
+            } catch (\Throwable $e) {
+                $error = $e;
+            } finally {
+                $this->beginShutdown();
             }
+
+            [$inboundErrors] = awaitAll($this->inboundRequests);
+            $this->inboundRequests = [];
+            $error ??= $this->inboundRequestError;
+            if (null === $error) {
+                foreach ($inboundErrors as $inboundError) {
+                    $error = $inboundError;
+                    break;
+                }
+            }
+        } finally {
+            $this->writer->close();
+
+            try {
+                $this->closeTransport();
+            } catch (\Throwable $e) {
+                $error ??= $e;
+            } finally {
+                $this->finishShutdown();
+            }
+        }
+
+        if (null !== $error) {
+            throw $error;
         }
     }
 
     public function close(): void
     {
-        if (!$this->transportClosed) {
-            $this->transportClosed = true;
-            $this->transport->close();
-        }
+        $this->beginShutdown();
+        $this->writer->close();
 
-        $this->stop();
+        try {
+            $this->closeTransport();
+        } finally {
+            $this->finishShutdown();
+        }
     }
 
     public function isClosed(): bool
     {
-        return $this->listenerStopped;
+        return $this->closed;
     }
 
     public function onClose(\Closure $onClose): void
@@ -108,26 +153,45 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
     private function listenLoop(): void
     {
-        try {
-            while (null !== $message = $this->transport->receive()) {
-                try {
-                    $this->processMessage($message);
-                } catch (ConnectionClosedException) {
-                    // the response is undeliverable, keep draining inbound messages
+        while (true) {
+            try {
+                $message = $this->transport->receive($this->connectionCancellation->getCancellation());
+            } catch (CancelledException $e) {
+                if (!$this->shutdownStarted) {
+                    throw $e;
                 }
+
+                return;
             }
-        } finally {
-            $this->stop();
+            if (null === $message) {
+                return;
+            }
+
+            try {
+                $this->processMessage($message);
+            } catch (ConnectionClosedException) {
+                // the response is undeliverable, keep draining inbound messages
+            }
         }
     }
 
-    private function stop(): void
+    private function closeTransport(): void
     {
-        if ($this->listenerStopped) {
+        if ($this->transportClosed) {
             return;
         }
 
-        $this->listenerStopped = true;
+        $this->transportClosed = true;
+        $this->transport->close();
+    }
+
+    private function beginShutdown(): void
+    {
+        if ($this->shutdownStarted) {
+            return;
+        }
+
+        $this->shutdownStarted = true;
         $this->connectionCancellation->cancel();
         foreach ($this->pendingRequests as $deferred) {
             if (!$deferred->isComplete()) {
@@ -135,6 +199,15 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             }
         }
         $this->pendingRequests = [];
+    }
+
+    private function finishShutdown(): void
+    {
+        if ($this->closed) {
+            return;
+        }
+
+        $this->closed = true;
         $this->onClose->complete();
     }
 
@@ -192,7 +265,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
      */
     public function startRequest(string $method, array $params = []): OutboundRequest
     {
-        if ($this->listenerStopped) {
+        if ($this->shutdownStarted) {
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
 
@@ -227,7 +300,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         if (!$entries) {
             throw new InvalidArgumentException('A JSON-RPC batch must contain at least one entry.');
         }
-        if ($this->listenerStopped && array_any($entries, static fn(BatchRequest|BatchNotification $entry): bool => $entry instanceof BatchRequest)) {
+        if ($this->shutdownStarted) {
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
 
@@ -302,6 +375,10 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
      */
     public function notify(string $method, array $params = []): void
     {
+        if ($this->shutdownStarted) {
+            throw new ConnectionClosedException('The JSON-RPC connection is closed.');
+        }
+
         $payload = [
             'jsonrpc' => '2.0',
             'method' => $method,
@@ -376,6 +453,10 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         }
 
         if (null === $this->messageHandler) {
+            if (!$message->isNotification()) {
+                $responder->reject(JsonRpcError::METHOD_NOT_FOUND, \sprintf('Method not found: %s', $message->getMethod()));
+            }
+
             return;
         }
 
@@ -390,8 +471,16 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
         $result = ($this->messageHandler)($message, $responder);
         if ($result instanceof Future) {
-            $key = spl_object_hash($result);
+            $key = $this->nextInboundRequestId++;
             $this->inboundRequests[$key] = $result;
+            $result->catch(function (\Throwable $e): void {
+                $this->inboundRequestError ??= $e;
+
+                try {
+                    $this->close();
+                } catch (\Throwable) {
+                }
+            })->ignore();
             $result->finally(function () use ($key): void {
                 unset($this->inboundRequests[$key]);
             })->ignore();

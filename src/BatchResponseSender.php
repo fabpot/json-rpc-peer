@@ -11,8 +11,6 @@
 
 namespace Fabpot\JsonRpc;
 
-use Fabpot\JsonRpc\Exception\InvalidArgumentException;
-
 /** @internal */
 final class BatchResponseSender implements ResponseSenderInterface
 {
@@ -20,7 +18,7 @@ final class BatchResponseSender implements ResponseSenderInterface
     private array $responses = [];
     private int $pendingResponses = 0;
     private bool $sealed = false;
-    private bool $sent = false;
+    private bool $sendAttempted = false;
 
     public function __construct(
         private readonly JsonRpcWriter $writer,
@@ -80,18 +78,7 @@ final class BatchResponseSender implements ResponseSenderInterface
      */
     private function settle(array $response): void
     {
-        try {
-            $this->writer->encode([$response]);
-        } catch (InvalidArgumentException) {
-            $response = [
-                'jsonrpc' => '2.0',
-                'id' => $response['id'],
-                'error' => [
-                    'code' => JsonRpcError::INTERNAL_ERROR,
-                    'message' => 'Internal error',
-                ],
-            ];
-        }
+        $this->writer->encode([$response]);
 
         $this->responses[] = $response;
         --$this->pendingResponses;
@@ -100,11 +87,11 @@ final class BatchResponseSender implements ResponseSenderInterface
 
     private function flush(): void
     {
-        if (!$this->sealed || $this->sent || 0 !== $this->pendingResponses || !$this->responses) {
+        if (!$this->sealed || $this->sendAttempted || 0 !== $this->pendingResponses || !$this->responses) {
             return;
         }
 
-        $this->sent = true;
+        $this->sendAttempted = true;
         $this->writer->write($this->responses);
     }
 }

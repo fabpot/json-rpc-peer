@@ -13,6 +13,7 @@ namespace Fabpot\JsonRpc\Tests;
 
 use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableBuffer;
+use Amp\DeferredFuture;
 use Fabpot\JsonRpc\BatchNotification;
 use Fabpot\JsonRpc\BatchRequest;
 use Fabpot\JsonRpc\Exception\ConnectionClosedException;
@@ -264,9 +265,40 @@ final class JsonRpcPeerTest extends TestCase
         $pending->await();
     }
 
+    public function testCloseFinalizesThePeerWhenTheTransportCloseFails(): void
+    {
+        $failure = new RuntimeException('Close failed.');
+        $transport = $this->createMock(JsonRpcTransportInterface::class);
+        $transport->expects($this->once())->method('close')->willThrowException($failure);
+        $peer = new JsonRpcPeer($transport);
+        $pending = $peer->request('pending');
+        $closed = 0;
+        $peer->onClose(static function () use (&$closed): void {
+            ++$closed;
+        });
+
+        try {
+            $peer->close();
+            $this->fail('The transport close failure was not raised.');
+        } catch (RuntimeException $e) {
+            $this->assertSame($failure, $e);
+        }
+        $peer->close();
+        \Amp\delay(0);
+
+        $this->assertTrue($peer->isClosed());
+        $this->assertSame(1, $closed);
+        try {
+            $pending->await();
+            $this->fail('The pending request was not failed.');
+        } catch (ConnectionClosedException) {
+        }
+    }
+
     public function testRemoteClosureClosesThePeerAndInvokesLateCloseCallbacks(): void
     {
-        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
         $closed = 0;
         $peer->onClose(static function () use (&$closed): void {
             ++$closed;
@@ -279,7 +311,36 @@ final class JsonRpcPeerTest extends TestCase
         \Amp\delay(0);
 
         $this->assertTrue($peer->isClosed());
+        $this->assertTrue($output->isClosed());
         $this->assertSame(2, $closed);
+    }
+
+    public function testRejectsConcurrentListenCalls(): void
+    {
+        $input = new Pipe(4096);
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input->getSource(), new CapturingStream()));
+        $listener = async($peer->listen(...));
+        \Amp\delay(0);
+
+        try {
+            $peer->listen();
+            $this->fail('The concurrent listener was not rejected.');
+        } catch (RuntimeException $e) {
+            $this->assertSame('The JSON-RPC listener has already been started.', $e->getMessage());
+        }
+
+        $peer->close();
+        $listener->await();
+    }
+
+    public function testRejectsRepeatedListenCalls(): void
+    {
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $peer->listen();
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('The JSON-RPC listener has already been started.');
+        $peer->listen();
     }
 
     public function testDispatchesMixedBatchAndReturnsResponseArray(): void
@@ -362,14 +423,45 @@ final class JsonRpcPeerTest extends TestCase
         ]]], $output->messages());
     }
 
-    public function testBatchWithNoRegisteredHandlerDoesNotWritePartialResponse(): void
+    public function testRequestWithNoRegisteredHandlerReturnsMethodNotFound(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"request"}'), $output));
+
+        $peer->listen();
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'error' => [
+                'code' => JsonRpcError::METHOD_NOT_FOUND,
+                'message' => 'Method not found: request',
+            ],
+        ]], $output->messages());
+    }
+
+    public function testBatchWithNoRegisteredHandlerReturnsCompleteErrorResponse(): void
     {
         $output = new CapturingStream();
         $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"request"},42]'), $output));
 
         $peer->listen();
 
-        $this->assertSame([], $output->messages());
+        $this->assertSame([[[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'error' => [
+                'code' => JsonRpcError::METHOD_NOT_FOUND,
+                'message' => 'Method not found: request',
+            ],
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => null,
+            'error' => [
+                'code' => JsonRpcError::INVALID_REQUEST,
+                'message' => 'Invalid Request',
+            ],
+        ]]], $output->messages());
     }
 
     public function testNotificationOnlyBatchProducesNoResponse(): void
@@ -471,17 +563,23 @@ final class JsonRpcPeerTest extends TestCase
     {
         $output = new CapturingStream();
         $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"first"},{"jsonrpc":"2.0","id":2,"method":"second"}]'), $output));
-        $responders = [];
-        $peer->onMessage(static function (JsonRpcMessage $message, ?RequestResponder $responder) use (&$responders): void {
-            $responders[$message->getMethod()] = $responder;
-        });
-
-        $peer->listen();
+        $dispatcher = new JsonRpcDispatcher($peer);
+        /** @var DeferredFuture<int> $first */
+        $first = new DeferredFuture();
+        /** @var DeferredFuture<int> $second */
+        $second = new DeferredFuture();
+        $dispatcher->onRequest('first', static fn(): int => $first->getFuture()->await());
+        $dispatcher->onRequest('second', static fn(): int => $second->getFuture()->await());
+        $listener = async($peer->listen(...));
+        \Amp\delay(0);
 
         $this->assertSame([], $output->messages());
-        $responders['second']?->resolve(2);
+        $second->complete(2);
+        \Amp\delay(0);
         $this->assertSame([], $output->messages());
-        $responders['first']?->resolve(1);
+        $first->complete(1);
+        $listener->await();
+
         $this->assertSame([[[
             'jsonrpc' => '2.0',
             'id' => 2,
@@ -713,14 +811,37 @@ final class JsonRpcPeerTest extends TestCase
         $peer->request('too-late');
     }
 
-    public function testBatchRequestAfterListenerStopsThrowsConnectionClosedException(): void
+    public function testNotificationAfterListenerStopsThrowsConnectionClosedException(): void
     {
         $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
         $peer->listen();
 
         $this->expectException(ConnectionClosedException::class);
         $this->expectExceptionMessage('The JSON-RPC connection is closed.');
-        $peer->batch(new BatchNotification('note'), new BatchRequest('too-late'));
+        $peer->notify('too-late');
+    }
+
+    public function testNotificationBatchAfterListenerStopsThrowsConnectionClosedException(): void
+    {
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $peer->listen();
+
+        $this->expectException(ConnectionClosedException::class);
+        $this->expectExceptionMessage('The JSON-RPC connection is closed.');
+        $peer->batch(new BatchNotification('too-late'));
+    }
+
+    public function testInternalResponseAfterListenerStopsThrowsConnectionClosedException(): void
+    {
+        $transport = $this->createMock(JsonRpcTransportInterface::class);
+        $transport->expects($this->once())->method('receive')->willReturn(null);
+        $transport->expects($this->never())->method('send');
+        $peer = new JsonRpcPeer($transport);
+        $peer->listen();
+
+        $this->expectException(ConnectionClosedException::class);
+        $this->expectExceptionMessage('The JSON-RPC connection is closed.');
+        $peer->respond(1, \INF);
     }
 
     public function testConnectionCloseFailsPendingRequests(): void

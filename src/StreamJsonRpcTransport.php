@@ -92,9 +92,23 @@ final class StreamJsonRpcTransport implements JsonRpcTransportInterface
 
     public function close(): void
     {
-        $this->input->close();
+        $error = null;
+        try {
+            $this->input->close();
+        } catch (\Throwable $e) {
+            $error = $e;
+        }
+
         if ($this->output !== $this->input) {
-            $this->output->close();
+            try {
+                $this->output->close();
+            } catch (\Throwable $e) {
+                $error ??= $e;
+            }
+        }
+
+        if (null !== $error) {
+            throw $error;
         }
     }
 

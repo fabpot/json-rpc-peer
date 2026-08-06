@@ -16,10 +16,13 @@ use Amp\Cancellation;
 /**
  * Exchanges complete JSON-RPC messages over an owned connection.
  *
- * A transport passed to JsonRpcPeer is owned by the peer and closed by JsonRpcPeer::close().
+ * A transport passed to JsonRpcPeer is owned by the peer and closed when the peer closes or its listener stops.
  */
 interface JsonRpcTransportInterface
 {
+    /**
+     * This method is called by a single listener and must honor cancellation.
+     */
     public function receive(?Cancellation $cancellation = null): ?string;
 
     /**
@@ -27,5 +30,8 @@ interface JsonRpcTransportInterface
      */
     public function send(string $message): void;
 
+    /**
+     * This method must be idempotent and unblock any pending receive() call.
+     */
     public function close(): void;
 }

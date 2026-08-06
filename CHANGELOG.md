@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Make peer shutdown deterministic and reject outbound work after shutdown begins
+- Propagate response delivery failures without misclassifying them as handler errors
+- Drain all active request handlers before a listener returns
+- Return method-not-found errors when no message handler is registered
+
 ## 0.5.0 - 2026-07-30
 
 - Add standard closable lifecycle support to JSON-RPC peers

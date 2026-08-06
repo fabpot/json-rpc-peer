@@ -14,6 +14,7 @@ namespace Fabpot\JsonRpc\Tests;
 use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableBuffer;
 use Amp\ByteStream\ReadableIterableStream;
+use Amp\ByteStream\ReadableStream;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Fabpot\JsonRpc\ContentLengthJsonRpcTransport;
@@ -156,6 +157,24 @@ final class ContentLengthJsonRpcTransportTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('message exceeds');
         $transport->send('abc');
+    }
+
+    public function testCloseAttemptsToCloseOutputWhenInputCloseFails(): void
+    {
+        $failure = new \LogicException('Input close failed.');
+        $input = $this->createMock(ReadableStream::class);
+        $input->expects($this->once())->method('close')->willThrowException($failure);
+        $output = new CapturingStream();
+        $transport = new ContentLengthJsonRpcTransport($input, $output);
+
+        try {
+            $transport->close();
+            $this->fail('The input close failure was not raised.');
+        } catch (\LogicException $e) {
+            $this->assertSame($failure, $e);
+        }
+
+        $this->assertTrue($output->isClosed());
     }
 
     public function testWrapsReadFailures(): void

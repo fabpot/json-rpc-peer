@@ -15,6 +15,7 @@ use Amp\Cancellation;
 use Amp\DeferredCancellation;
 use Amp\Future;
 use Fabpot\JsonRpc\Exception\ConnectionClosedException;
+use Fabpot\JsonRpc\Exception\PayloadEncodingException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 
@@ -149,16 +150,27 @@ final class JsonRpcDispatcher
         return async(function () use ($handler, $message, $params, $responder, $key, $deferredCancellation): void {
             try {
                 try {
-                    $responder->resolve($handler($params, $deferredCancellation->getCancellation()));
+                    $result = $handler($params, $deferredCancellation->getCancellation());
                 } catch (JsonRpcException $e) {
                     try {
                         $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
-                    } catch (InvalidArgumentException $encodingError) {
+                    } catch (PayloadEncodingException $encodingError) {
                         $this->reportUnhandledError($encodingError, $message);
                         $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
                     }
+
+                    return;
                 } catch (\Throwable $e) {
                     $this->reportUnhandledError($e, $message);
+                    $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
+
+                    return;
+                }
+
+                try {
+                    $responder->resolve($result);
+                } catch (PayloadEncodingException $encodingError) {
+                    $this->reportUnhandledError($encodingError, $message);
                     $responder->reject(JsonRpcError::INTERNAL_ERROR, 'Internal error');
                 }
             } catch (ConnectionClosedException) {
