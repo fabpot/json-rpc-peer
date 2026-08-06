@@ -28,10 +28,10 @@ use function Amp\async;
  */
 final class JsonRpcDispatcher
 {
-    /** @var array<string, array{0: \Closure, 1: int}> */
+    /** @var array<string, array{0: \Closure, 1: int, 2: \ReflectionParameter|null}> */
     private array $requestHandlers = [];
 
-    /** @var array<string, array{0: \Closure, 1: int}> */
+    /** @var array<string, array{0: \Closure, 1: int, 2: \ReflectionParameter|null}> */
     private array $notificationHandlers = [];
 
     /** @var array<string, array<int, DeferredCancellation>> */
@@ -135,7 +135,10 @@ final class JsonRpcDispatcher
             $registeredHandler = $this->notificationHandlers[$method] ?? null;
             if (null !== $registeredHandler) {
                 try {
-                    [$handler, $argumentCount] = $registeredHandler;
+                    [$handler, $argumentCount, $paramsParameter] = $registeredHandler;
+                    if (!self::parameterAcceptsValue($paramsParameter, $params)) {
+                        return null;
+                    }
                     $handler(...\array_slice([$params, $message], 0, $argumentCount));
                 } catch (\Throwable $e) {
                     $this->reportUnhandledError($e, $message);
@@ -153,7 +156,13 @@ final class JsonRpcDispatcher
             return null;
         }
 
-        [$handler, $argumentCount] = $registeredHandler;
+        [$handler, $argumentCount, $paramsParameter] = $registeredHandler;
+        if (!self::parameterAcceptsValue($paramsParameter, $params)) {
+            $responder->reject(JsonRpcError::INVALID_PARAMS, 'Invalid params');
+
+            return null;
+        }
+
         $key = $this->requestKey($message->getId());
         $deferredCancellation = new DeferredCancellation();
         $this->activeRequests[$key][spl_object_id($deferredCancellation)] = $deferredCancellation;
@@ -202,14 +211,14 @@ final class JsonRpcDispatcher
     /**
      * @param list<class-string> $contextTypes
      *
-     * @return array{0: \Closure, 1: int}
+     * @return array{0: \Closure, 1: int, 2: \ReflectionParameter|null}
      */
     private function prepareHandler(callable $handler, array $contextTypes): array
     {
         $handler = $handler instanceof \Closure ? $handler : \Closure::fromCallable($handler);
         $parameters = new \ReflectionFunction($handler)->getParameters();
         if (!$parameters) {
-            return [$handler, 0];
+            return [$handler, 0, null];
         }
 
         $argumentCount = 1;
@@ -224,7 +233,56 @@ final class JsonRpcDispatcher
             ++$argumentCount;
         }
 
-        return [$handler, $argumentCount];
+        return [$handler, $argumentCount, $parameters[0]];
+    }
+
+    private static function parameterAcceptsValue(?\ReflectionParameter $parameter, mixed $value): bool
+    {
+        if (null === $parameter || null === $parameter->getType()) {
+            return true;
+        }
+
+        return self::typeAcceptsValue($parameter->getType(), $value);
+    }
+
+    private static function typeAcceptsValue(\ReflectionType $type, mixed $value): bool
+    {
+        if (null === $value) {
+            return $type->allowsNull();
+        }
+        if ($type instanceof \ReflectionUnionType) {
+            foreach ($type->getTypes() as $nestedType) {
+                if (self::typeAcceptsValue($nestedType, $value)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        if ($type instanceof \ReflectionIntersectionType) {
+            foreach ($type->getTypes() as $nestedType) {
+                if (!self::typeAcceptsValue($nestedType, $value)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        if (!$type instanceof \ReflectionNamedType) {
+            return false;
+        }
+        if (!$type->isBuiltin()) {
+            return \is_object($value) && is_a($value, $type->getName());
+        }
+
+        return match ($type->getName()) {
+            'array' => \is_array($value),
+            'callable' => \is_callable($value),
+            'iterable' => is_iterable($value),
+            'mixed' => true,
+            'object' => \is_object($value),
+            default => false,
+        };
     }
 
     /** @param class-string $class */

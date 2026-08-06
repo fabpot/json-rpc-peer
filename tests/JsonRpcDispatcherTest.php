@@ -43,6 +43,54 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => ['echoed' => 42]]], $output);
     }
 
+    public function testRequestParameterShapeMismatchBecomesInvalidParams(): void
+    {
+        $handled = false;
+        $reported = [];
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","id":1,"method":"object","params":[]}',
+            static function (JsonRpcDispatcher $dispatcher) use (&$handled, &$reported): void {
+                $dispatcher->onRequest('object', static function (\stdClass $params) use (&$handled): void {
+                    $handled = true;
+                });
+                $dispatcher->onUnhandledError(static function (\Throwable $error) use (&$reported): void {
+                    $reported[] = $error;
+                });
+            },
+        );
+
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'error' => ['code' => JsonRpcError::INVALID_PARAMS, 'message' => 'Invalid params'],
+        ]], $output);
+        $this->assertFalse($handled);
+        $this->assertSame([], $reported);
+    }
+
+    public function testNotificationParameterShapeMismatchIsIgnored(): void
+    {
+        $handled = false;
+        $reported = [];
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"object\",\"params\":[]}\n"
+            . '{"jsonrpc":"2.0","id":1,"method":"ping"}',
+            static function (JsonRpcDispatcher $dispatcher) use (&$handled, &$reported): void {
+                $dispatcher->onNotification('object', static function (\stdClass $params) use (&$handled): void {
+                    $handled = true;
+                });
+                $dispatcher->onRequest('ping', static fn(): string => 'pong');
+                $dispatcher->onUnhandledError(static function (\Throwable $error) use (&$reported): void {
+                    $reported[] = $error;
+                });
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'pong']], $output);
+        $this->assertFalse($handled);
+        $this->assertSame([], $reported);
+    }
+
     public function testPassesMessageContextToRequestHandlers(): void
     {
         $context = null;

@@ -167,7 +167,9 @@ Incoming JSON values keep their shape:
 - explicit `[]` and `{}` remain distinguishable.
 
 The same mapping applies to results and remote error data. A handler may narrow
-its parameter type to the shape expected by its method.
+its parameter type to the shape expected by its method. Requests with a different
+parameter shape receive an `Invalid params` error, while mismatched notifications
+are ignored.
 
 Outbound methods accept `array|object|null` parameters. `null`, the default,
 omits `params`; use `[]` for an empty JSON array and `new \stdClass()` for an
