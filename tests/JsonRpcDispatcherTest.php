@@ -11,6 +11,7 @@
 
 namespace Fabpot\JsonRpc\Tests;
 
+use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableBuffer;
 use Amp\Cancellation;
 use Amp\CancelledException;
@@ -25,6 +26,7 @@ use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use Fabpot\JsonRpc\TrafficLoggerInterface;
 use PHPUnit\Framework\TestCase;
 
+use function Amp\async;
 use function Amp\delay;
 
 final class JsonRpcDispatcherTest extends TestCase
@@ -389,6 +391,111 @@ final class JsonRpcDispatcherTest extends TestCase
         );
 
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 11, 'result' => 'completed']], $output);
+    }
+
+    public function testRejectsRequestsAboveConcurrencyLimitWithoutBlockingCancellation(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer(
+                '{"jsonrpc":"2.0","id":1,"method":"wait"}' . "\n"
+                . '{"jsonrpc":"2.0","method":"cancel","params":{"requestId":1}}' . "\n"
+                . '{"jsonrpc":"2.0","id":2,"method":"wait"}'
+            ), $output),
+            maximumConcurrentInboundRequests: 1,
+        );
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $handled = 0;
+        $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation) use (&$handled): string {
+            ++$handled;
+            try {
+                delay(10, cancellation: $cancellation);
+            } catch (CancelledException) {
+                return 'canceled';
+            }
+
+            return 'completed';
+        });
+        $dispatcher->onCancel('cancel', 'requestId');
+
+        $peer->listen();
+
+        $this->assertSame(1, $handled);
+        $this->assertSame([[
+            'jsonrpc' => '2.0',
+            'id' => 2,
+            'error' => [
+                'code' => JsonRpcError::SERVER_OVERLOADED,
+                'message' => 'Too many concurrent requests.',
+            ],
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'result' => 'canceled',
+        ]], $output->messages());
+    }
+
+    public function testConcurrencyLimitProducesOneCompleteBatchResponse(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"method":"wait"},{"jsonrpc":"2.0","id":2,"method":"wait"}]'), $output),
+            maximumConcurrentInboundRequests: 1,
+        );
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('wait', static function (array $params, Cancellation $cancellation): string {
+            try {
+                delay(10, cancellation: $cancellation);
+            } catch (CancelledException) {
+                return 'canceled';
+            }
+
+            return 'completed';
+        });
+
+        $peer->listen();
+
+        $this->assertSame([[[
+            'jsonrpc' => '2.0',
+            'id' => 2,
+            'error' => [
+                'code' => JsonRpcError::SERVER_OVERLOADED,
+                'message' => 'Too many concurrent requests.',
+            ],
+        ], [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'result' => 'canceled',
+        ]]], $output->messages());
+    }
+
+    public function testConcurrencySlotIsReleasedAfterARequestSettles(): void
+    {
+        $input = new Pipe(4096);
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport($input->getSource(), $output),
+            maximumConcurrentInboundRequests: 1,
+        );
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('run', static fn(): string => 'done');
+        $listener = async($peer->listen(...));
+
+        $input->getSink()->write('{"jsonrpc":"2.0","id":1,"method":"run"}' . "\n");
+        for ($i = 0; $i < 10 && 1 !== \count($output->messages()); ++$i) {
+            delay(0);
+        }
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'done']], $output->messages());
+        delay(0);
+
+        $input->getSink()->write('{"jsonrpc":"2.0","id":2,"method":"run"}' . "\n");
+        $input->getSink()->close();
+        $listener->await();
+
+        $this->assertSame([
+            ['jsonrpc' => '2.0', 'id' => 1, 'result' => 'done'],
+            ['jsonrpc' => '2.0', 'id' => 2, 'result' => 'done'],
+        ], $output->messages());
     }
 
     public function testResponseWriteFailureIsNotConvertedToAHandlerError(): void

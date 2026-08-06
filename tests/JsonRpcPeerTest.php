@@ -22,6 +22,7 @@ use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\Exception\RuntimeException;
+use Fabpot\JsonRpc\Exception\UnexpectedValueException;
 use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -78,6 +79,27 @@ final class JsonRpcPeerTest extends TestCase
         $serverToClient->getSink()->close();
         $clientListener->await();
         $serverListener->await();
+    }
+
+    /**
+     * @return iterable<string, array{int, int, string}>
+     */
+    public static function invalidPeerLimitProvider(): iterable
+    {
+        yield 'concurrent requests' => [0, 128, 'The maximum number of concurrent inbound requests must be a positive integer.'];
+        yield 'batch entries' => [64, 0, 'The maximum number of JSON-RPC batch entries must be a positive integer.'];
+    }
+
+    #[DataProvider('invalidPeerLimitProvider')]
+    public function testRejectsInvalidPeerLimits(int $maximumConcurrentInboundRequests, int $maximumBatchEntries, string $message): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage($message);
+        new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()),
+            maximumConcurrentInboundRequests: $maximumConcurrentInboundRequests,
+            maximumBatchEntries: $maximumBatchEntries,
+        );
     }
 
     /**
@@ -166,6 +188,74 @@ final class JsonRpcPeerTest extends TestCase
             'id' => null,
             'error' => ['code' => JsonRpcError::INVALID_REQUEST, 'message' => 'Invalid Request'],
         ]], $output->messages());
+    }
+
+    public function testAcceptsInboundBatchAtConfiguredEntryLimit(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","method":"first"},{"jsonrpc":"2.0","method":"second"}]'), $output),
+            maximumBatchEntries: 2,
+        );
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $seen = [];
+        $dispatcher->onNotification('first', static function () use (&$seen): void {
+            $seen[] = 'first';
+        });
+        $dispatcher->onNotification('second', static function () use (&$seen): void {
+            $seen[] = 'second';
+        });
+
+        $peer->listen();
+
+        $this->assertSame(['first', 'second'], $seen);
+        $this->assertSame([], $output->messages());
+    }
+
+    public function testRejectsInboundBatchAboveConfiguredEntryLimit(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer('[{"jsonrpc":"2.0","method":"first"},{"jsonrpc":"2.0","method":"second"}]'), $output),
+            maximumBatchEntries: 1,
+        );
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $seen = [];
+        $dispatcher->onNotification('first', static function () use (&$seen): void {
+            $seen[] = 'first';
+        });
+        $dispatcher->onNotification('second', static function () use (&$seen): void {
+            $seen[] = 'second';
+        });
+
+        try {
+            $peer->listen();
+            $this->fail('The oversized inbound batch was not rejected.');
+        } catch (UnexpectedValueException $e) {
+            $this->assertSame('The JSON-RPC batch exceeds the configured entry limit.', $e->getMessage());
+        }
+
+        $this->assertSame([], $seen);
+        $this->assertTrue($peer->isClosed());
+        $this->assertTrue($output->isClosed());
+    }
+
+    public function testRejectsOutboundBatchAboveConfiguredEntryLimit(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer(''), $output),
+            maximumBatchEntries: 1,
+        );
+
+        try {
+            $peer->batch(new BatchNotification('first'), new BatchNotification('second'));
+            $this->fail('The oversized outbound batch was not rejected.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertSame('The JSON-RPC batch exceeds the configured entry limit.', $e->getMessage());
+        }
+
+        $this->assertSame([], $output->messages());
     }
 
     public function testEmptyMessageProducesParseError(): void

@@ -6,6 +6,8 @@
 - Propagate response delivery failures without misclassifying them as handler errors
 - Drain all active request handlers before a listener returns
 - Return method-not-found errors when no message handler is registered
+- Add configurable limits for concurrent inbound requests and batch entries
+- Enforce configurable inbound and outbound WebSocket message limits
 
 ## 0.5.0 - 2026-07-30
 

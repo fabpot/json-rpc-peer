@@ -12,7 +12,7 @@
 namespace Fabpot\JsonRpc;
 
 /**
- * The reserved JSON-RPC 2.0 error codes.
+ * Standard and package-defined JSON-RPC 2.0 error codes.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
@@ -23,6 +23,7 @@ final class JsonRpcError
     public const METHOD_NOT_FOUND = -32601;
     public const INVALID_PARAMS = -32602;
     public const INTERNAL_ERROR = -32603;
+    public const SERVER_OVERLOADED = -32000;
 
     private function __construct() {}
 }

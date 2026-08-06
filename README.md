@@ -105,8 +105,8 @@ KiB limit and messages to a 16 MiB limit. Both limits can be configured through
 the `maximumHeaderBytes` and `maximumMessageBytes` constructor arguments.
 
 For WebSocket connections, install `amphp/websocket` and pass its client to the
-message-oriented transport. Each text frame contains one complete JSON-RPC
-message; binary frames are rejected:
+message-oriented transport. Each text message contains one complete JSON-RPC
+message; binary messages are rejected:
 
 ```php
 use Fabpot\JsonRpc\JsonRpcPeer;
@@ -114,6 +114,10 @@ use Fabpot\JsonRpc\WebsocketJsonRpcTransport;
 
 $peer = new JsonRpcPeer(new WebsocketJsonRpcTransport($websocketClient));
 ```
+
+WebSocket messages default to the same 16 MiB inbound and outbound limit as the
+stream transports. Configure it with the `maximumMessageBytes` constructor
+argument. A lower limit configured on the Amp WebSocket client still applies.
 
 Custom transports can implement `JsonRpcTransportInterface`. `receive()` returns
 one complete JSON-RPC message or `null` when the connection closes; `send()`
@@ -156,9 +160,27 @@ before returning:
 $peer->listen();
 ```
 
+The peer admits up to 64 concurrent inbound request handlers by default. It
+keeps reading responses and notifications at capacity, but rejects additional
+requests with `JsonRpcError::SERVER_OVERLOADED`. Batches default to 128 entries
+in either direction. Configure both limits when creating the peer:
+
+```php
+$peer = new JsonRpcPeer(
+    $transport,
+    maximumConcurrentInboundRequests: 128,
+    maximumBatchEntries: 256,
+);
+```
+
+An inbound batch above the configured entry limit terminates `listen()` with an
+`UnexpectedValueException` rather than generating an amplified response. An
+oversized outbound batch throws `InvalidArgumentException` before it is sent.
+
 ### Error responses
 
-`JsonRpcError` defines all error codes reserved by JSON-RPC 2.0:
+`JsonRpcError` defines the five named JSON-RPC 2.0 error codes and the
+package-defined overload error:
 
 | Constant | Code | When it is used |
 | --- | ---: | --- |
@@ -167,10 +189,12 @@ $peer->listen();
 | `METHOD_NOT_FOUND` | `-32601` | No request handler is registered for the method. |
 | `INVALID_PARAMS` | `-32602` | A request handler rejects its method parameters. |
 | `INTERNAL_ERROR` | `-32603` | A request handler fails unexpectedly or its result cannot be encoded. |
+| `SERVER_OVERLOADED` | `-32000` | The configured concurrent inbound request limit has been reached. |
 
-The peer emits `PARSE_ERROR`, `INVALID_REQUEST`, and `METHOD_NOT_FOUND`
-automatically. Malformed messages receive a `PARSE_ERROR` response and are
-skipped, so a single bad message does not stop the listener. The peer also converts
+The peer emits `PARSE_ERROR`, `INVALID_REQUEST`, `METHOD_NOT_FOUND`, and
+`SERVER_OVERLOADED` automatically. Malformed messages receive a `PARSE_ERROR`
+response and are skipped, so a single bad message does not stop the listener.
+The peer also converts
 unexpected exceptions to `INTERNAL_ERROR` without exposing their messages.
 
 A request handler can throw `JsonRpcException` with `INVALID_PARAMS` when its
@@ -259,13 +283,13 @@ $dispatcher->onRequest('run', function (array $params, Cancellation $cancellatio
     try {
         return processItems($params['items'], $cancellation);
     } catch (CancelledException) {
-        throw new JsonRpcException(-32000, 'Request canceled.');
+        throw new JsonRpcException(-32800, 'Request canceled.');
     }
 });
 ```
 
 JSON-RPC does not define the response to a canceled request, so the handler
-chooses the result or error. Here, `-32000` is an application-defined error
+chooses the result or error. Here, `-32800` is an application-defined error
 code.
 
 JSON-RPC does not define a cancellation notification or its parameters. Before

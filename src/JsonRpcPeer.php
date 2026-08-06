@@ -22,6 +22,7 @@ use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\InvalidResponseException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\Exception\RuntimeException;
+use Fabpot\JsonRpc\Exception\UnexpectedValueException;
 
 use function Amp\async;
 use function Amp\Future\awaitAll;
@@ -60,7 +61,16 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     public function __construct(
         private readonly JsonRpcTransportInterface $transport,
         private readonly ?TrafficLoggerInterface $trafficLogger = null,
+        private readonly int $maximumConcurrentInboundRequests = 64,
+        private readonly int $maximumBatchEntries = 128,
     ) {
+        if ($maximumConcurrentInboundRequests < 1) {
+            throw new InvalidArgumentException('The maximum number of concurrent inbound requests must be a positive integer.');
+        }
+        if ($maximumBatchEntries < 1) {
+            throw new InvalidArgumentException('The maximum number of JSON-RPC batch entries must be a positive integer.');
+        }
+
         $this->writer = new JsonRpcWriter($transport, $trafficLogger);
         $this->connectionCancellation = new DeferredCancellation();
         $this->onClose = new DeferredFuture();
@@ -300,6 +310,10 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         if (!$entries) {
             throw new InvalidArgumentException('A JSON-RPC batch must contain at least one entry.');
         }
+        if (\count($entries) > $this->maximumBatchEntries) {
+            throw new InvalidArgumentException('The JSON-RPC batch exceeds the configured entry limit.');
+        }
+
         if ($this->shutdownStarted) {
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
@@ -395,6 +409,9 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
      */
     private function handleBatch(array $entries): void
     {
+        if (\count($entries) > $this->maximumBatchEntries) {
+            throw new UnexpectedValueException('The JSON-RPC batch exceeds the configured entry limit.');
+        }
         if (!$entries) {
             $this->respondError(null, JsonRpcError::INVALID_REQUEST, 'Invalid Request');
 
@@ -465,6 +482,12 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
                 ($this->messageHandler)($message, null);
             } catch (\Throwable) {
             }
+
+            return;
+        }
+
+        if (\count($this->inboundRequests) >= $this->maximumConcurrentInboundRequests) {
+            $responder->reject(JsonRpcError::SERVER_OVERLOADED, 'Too many concurrent requests.');
 
             return;
         }
