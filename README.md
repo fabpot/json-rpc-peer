@@ -1,78 +1,12 @@
 # JSON-RPC
 
-A minimal, asynchronous, bidirectional [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
-peer over message-oriented transports, built on [amphp](https://amphp.org) and
-the [Revolt](https://revolt.run) event loop.
+A small, asynchronous, bidirectional [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
+peer built on [amphp](https://amphp.org).
 
-This is a **peer** JSON-RPC library: a single long-lived connection over which
-both sides send requests and notifications, answer inbound requests, and
-resolve responses out of order. It is the primitive behind stdio protocols such
-as the [Language Server
-Protocol](https://microsoft.github.io/language-server-protocol/) and the [Model
-Context Protocol](https://modelcontextprotocol.io).
-
-```mermaid
-sequenceDiagram
-    participant A as Application A
-    participant PA as JsonRpcPeer A
-    participant PB as JsonRpcPeer B
-    participant B as Application B
-
-    Note over PA,PB: One persistent duplex connection
-
-    par Application A calls Application B
-        A->>PA: request("sum", params)
-        PA->>PB: Request, id 1
-        PB->>B: onRequest("sum")
-        B-->>PB: return result
-        PB-->>PA: Response, id 1
-        PA-->>A: Future resolves
-    and Application B calls Application A
-        B->>PB: request("status", params)
-        PB->>PA: Request, id 7
-        PA->>A: onRequest("status")
-        A-->>PA: return result
-        PA-->>PB: Response, id 7
-        PB-->>B: Future resolves
-    end
-
-    B->>PB: notify("progress", params)
-    PB->>PA: Notification
-    PA->>A: onNotification("progress")
-
-    Note over PA,PB: Requests can overlap and responses can arrive out of order
-```
-
-## Spec conformance
-
-The peer implements JSON-RPC 2.0, including mixed request and notification
-batches. The test suite covers every example in section 7 of the specification.
-
-String and numeric request IDs are kept distinct. An omitted ID identifies a
-notification; an explicit `null` ID remains a request, although the specification
-discourages null IDs. Numeric IDs must be finite, and integer-valued IDs must be
-within JavaScript's interoperable safe-integer range
-`[-9007199254740991, 9007199254740991]`. Integral float and integer forms such as
-`1.0` and `1` correlate to the same request. Fractional numeric IDs are accepted,
-but the specification discourages them; use string IDs for exact decimal values
-or integers outside the safe range. Locally generated outbound IDs are positive
-integers starting at 1.
-
-## Why this exists
-
-The PHP ecosystem has plenty of JSON-RPC libraries, but they model one HTTP
-request mapping to one response, are strictly a server or a client, run
-synchronously, and cannot let the endpoint initiate a call back to the other
-side. Bidirectional stdio protocols need none of that shape and all of what is
-missing:
-
-- **Peer**: the same endpoint serves inbound requests and emits its own
-  requests and notifications.
-- **Persistent duplex transport**: complete JSON-RPC messages over line-delimited
-  amphp byte streams, WebSocket connections, or a custom transport.
-- **Concurrent requests**: each inbound request runs in its own coroutine, so
-  handlers can suspend on asynchronous work while the peer keeps processing
-  other messages on the same connection.
+Unlike an HTTP-oriented JSON-RPC client or server, a peer uses one persistent
+connection where both sides can send requests and notifications. Requests run
+concurrently, and responses may arrive in any order. This makes the package a
+good fit for persistent protocols such as LSP and MCP.
 
 ## Installation
 
@@ -80,9 +14,11 @@ missing:
 composer require fabpot/json-rpc-peer
 ```
 
-## Usage
+PHP 8.4 or later is required.
 
-### Wiring a peer
+## Quick start
+
+Create a transport, peer, and dispatcher:
 
 ```php
 use Amp\ByteStream;
@@ -90,165 +26,110 @@ use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcPeer;
 use Fabpot\JsonRpc\StreamJsonRpcTransport;
 
-$input = ByteStream\getStdin();
-$output = ByteStream\getStdout();
-
-$peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output));
+$transport = new StreamJsonRpcTransport(
+    ByteStream\getStdin(),
+    ByteStream\getStdout(),
+);
+$peer = new JsonRpcPeer($transport);
 $dispatcher = new JsonRpcDispatcher($peer);
 ```
 
-`StreamJsonRpcTransport` exchanges one JSON-RPC message per line. Messages
-default to a 16 MiB limit, configurable through the `maximumMessageBytes`
-constructor argument. For protocols using `Content-Length` headers, such as
-LSP, use the content-length transport:
+Register request and notification handlers:
 
 ```php
-use Fabpot\JsonRpc\ContentLengthJsonRpcTransport;
-use Fabpot\JsonRpc\JsonRpcPeer;
-
-$peer = new JsonRpcPeer(new ContentLengthJsonRpcTransport($input, $output));
-```
-
-The content-length transport accepts additional headers, treats header names
-as case-insensitive, and uses strict CRLF separators. Headers default to an 8
-KiB limit and messages to a 16 MiB limit. Both limits can be configured through
-the `maximumHeaderBytes` and `maximumMessageBytes` constructor arguments.
-
-For WebSocket connections, install `amphp/websocket:^2` and pass its client to
-the message-oriented transport. Each text message contains one complete
-JSON-RPC message; binary messages are rejected:
-
-```php
-use Fabpot\JsonRpc\JsonRpcPeer;
-use Fabpot\JsonRpc\WebsocketJsonRpcTransport;
-
-$peer = new JsonRpcPeer(new WebsocketJsonRpcTransport($websocketClient));
-```
-
-WebSocket messages default to the same 16 MiB inbound and outbound limit as the
-stream transports. Configure it with the `maximumMessageBytes` constructor
-argument. A lower limit configured on the Amp WebSocket client still applies.
-
-Custom transports can implement `JsonRpcTransportInterface`. `receive()` returns
-one complete JSON-RPC message or `null` when the connection closes; `send()`
-accepts one complete JSON-RPC message and must serialize concurrent calls.
-`close()` must be idempotent and unblock a pending `receive()`. The peer takes
-ownership of the supplied transport. Call `$peer->close()` rather than closing
-its underlying streams or WebSocket directly.
-
-### Handling requests and notifications
-
-Register handlers by method name. A request handler returns its result; the
-dispatcher sends it as the JSON-RPC response.
-
-```php
-$dispatcher->onRequest('sum', function (stdClass $params): stdClass {
+$dispatcher->onRequest('sum', function (\stdClass $params): \stdClass {
     return (object) ['total' => array_sum($params->values)];
 });
-```
 
-A notification handler returns nothing because notifications have no response:
-
-```php
-$dispatcher->onNotification('log', function (stdClass $params): void {
+$dispatcher->onNotification('log', function (\stdClass $params): void {
     fwrite(\STDERR, $params->message."\n");
 });
 ```
 
-Registering a second request or notification handler for the same method throws
-an `InvalidArgumentException`. Request and notification handlers have separate
-namespaces, so the same method may have one of each.
-
-### JSON values
-
-The peer preserves JSON value shapes when decoding messages:
-
-| JSON value | PHP value |
-| --- | --- |
-| object | `stdClass` |
-| array | list (`array`) |
-| string, number, boolean, or null | corresponding PHP scalar or `null` |
-
-This mapping applies recursively to parameters, results, and error data. Omitted
-`params` are passed to handlers as `null`, while explicit `[]` and `{}` become
-an empty PHP array and an empty `stdClass`, respectively. A handler can therefore
-narrow its parameter type to the shape defined by its method contract.
-
-Outbound requests, notifications, and batch entries accept
-`array|object|null` parameters. `null`, the default, omits the `params` member;
-pass `[]` to send an empty JSON array or `new stdClass()` to send an empty JSON
-object:
-
-```php
-$peer->notify('without-params');
-$peer->notify('positional', []);
-$peer->notify('named', new stdClass());
-```
-
-Objects and associative arrays are encoded according to PHP's `json_encode()`
-rules. Prefer `stdClass` for JSON objects when round-trip shape fidelity matters.
-An object used as top-level parameters must serialize to a JSON object or array.
-A structured `JsonSerializable` representation is normalized once before writing;
-a scalar representation is rejected as invalid JSON-RPC parameters.
-
-### Running the peer
-
-After registering handlers, call `listen()` once. It reads and dispatches
-messages until the transport closes. It then requests cancellation of active
-request handlers, waits for them to finish, and closes the owned transport
-before returning:
+Then listen for messages. `listen()` is a one-shot operation and returns when
+the connection closes:
 
 ```php
 $peer->listen();
 ```
 
-The peer admits up to 64 concurrent inbound request handlers by default. It
-keeps reading responses and notifications at capacity, but rejects additional
-requests with `JsonRpcError::SERVER_OVERLOADED`. Batches default to 128 entries
-in either direction. Configure both limits when creating the peer:
+## Transports
+
+### Line-delimited streams
+
+`StreamJsonRpcTransport` exchanges one complete JSON-RPC message per line. It is
+suitable for protocols where messages cannot contain literal line breaks:
 
 ```php
-$peer = new JsonRpcPeer(
-    $transport,
-    maximumConcurrentInboundRequests: 128,
-    maximumBatchEntries: 256,
+$transport = new StreamJsonRpcTransport($input, $output);
+```
+
+Messages are limited to 16 MiB by default. Configure the limit when needed:
+
+```php
+$transport = new StreamJsonRpcTransport(
+    $input,
+    $output,
+    maximumMessageBytes: 4 * 1024 * 1024,
 );
 ```
 
-An inbound batch above the configured entry limit terminates `listen()` with an
-`UnexpectedValueException` rather than generating an amplified response. An
-oversized outbound batch throws `InvalidArgumentException` before it is sent.
+### Content-Length streams
 
-### Error responses
+`ContentLengthJsonRpcTransport` supports the framing used by protocols such as
+LSP:
 
-`JsonRpcError` defines the five named JSON-RPC 2.0 error codes and the
-package-defined overload error:
+```php
+use Fabpot\JsonRpc\ContentLengthJsonRpcTransport;
 
-| Constant | Code | When it is used |
-| --- | ---: | --- |
-| `PARSE_ERROR` | `-32700` | The peer received malformed JSON. |
-| `INVALID_REQUEST` | `-32600` | The decoded message is not a valid JSON-RPC request. |
-| `METHOD_NOT_FOUND` | `-32601` | No request handler is registered for the method. |
-| `INVALID_PARAMS` | `-32602` | A request handler rejects its method parameters. |
-| `INTERNAL_ERROR` | `-32603` | A request handler fails unexpectedly or its result cannot be encoded. |
-| `SERVER_OVERLOADED` | `-32000` | The configured concurrent inbound request limit has been reached. |
+$transport = new ContentLengthJsonRpcTransport($input, $output);
+```
 
-The peer emits `PARSE_ERROR`, `INVALID_REQUEST`, `METHOD_NOT_FOUND`, and
-`SERVER_OVERLOADED` automatically. Malformed messages receive a `PARSE_ERROR`
-response and are skipped, so a single bad message does not stop the listener.
-The peer also converts
-unexpected exceptions to `INTERNAL_ERROR` without exposing their messages.
+Headers default to an 8 KiB limit and messages to a 16 MiB limit:
 
-A request handler can throw `JsonRpcException` with `INVALID_PARAMS` when its
-parameters are valid JSON-RPC but invalid for that method:
+```php
+$transport = new ContentLengthJsonRpcTransport(
+    $input,
+    $output,
+    maximumHeaderBytes: 8 * 1024,
+    maximumMessageBytes: 4 * 1024 * 1024,
+);
+```
+
+### WebSocket
+
+Install the optional WebSocket dependency:
+
+```bash
+composer require amphp/websocket:^2
+```
+
+Then pass an Amp WebSocket client to the transport:
+
+```php
+use Fabpot\JsonRpc\WebsocketJsonRpcTransport;
+
+$transport = new WebsocketJsonRpcTransport($websocketClient);
+```
+
+Each text message contains one JSON-RPC message. Binary messages are rejected.
+The default inbound and outbound limit is 16 MiB and can be changed with the
+`maximumMessageBytes` constructor argument.
+
+## Handling requests
+
+Handlers receive the decoded `params` value and return the response result:
 
 ```php
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\JsonRpcError;
 
-$dispatcher->onRequest('divide', function (stdClass $params): float|int {
+$dispatcher->onRequest('divide', function (\stdClass $params): float|int {
     if (!is_int($params->value ?? null) || !is_int($params->by ?? null)) {
-        throw new JsonRpcException(JsonRpcError::INVALID_PARAMS, 'Expected integer "value" and "by" parameters.');
+        throw new JsonRpcException(
+            JsonRpcError::INVALID_PARAMS,
+            'Expected integer "value" and "by" parameters.',
+        );
     }
 
     if (0 === $params->by) {
@@ -259,162 +140,156 @@ $dispatcher->onRequest('divide', function (stdClass $params): float|int {
 });
 ```
 
-Handlers may also throw `JsonRpcException` with an application-defined code for
-errors outside the reserved JSON-RPC codes, as shown in the cancellation
-example below. At an application boundary, translate domain exceptions to
-`JsonRpcException` in the registered handler rather than coupling application
-services to JSON-RPC error codes.
-
-Unexpected handler exceptions remain hidden from the remote peer, but can be
-reported locally. Exceptions thrown by the error handler are ignored so they do
-not interrupt the peer:
+Throw `JsonRpcException` for an error that should be returned to the caller.
+Unexpected exceptions become an internal-error response. Register an error
+handler to log unexpected request or notification failures:
 
 ```php
 use Fabpot\JsonRpc\JsonRpcMessage;
 
-$dispatcher->onUnhandledError(function (\Throwable $error, JsonRpcMessage $message) use ($logger): void {
-    $logger->error('JSON-RPC handler failed.', [
-        'exception' => $error,
-        'method' => $message->getMethod(),
-    ]);
-});
+$dispatcher->onUnhandledError(
+    function (\Throwable $error, JsonRpcMessage $message) use ($logger): void {
+        $logger->error('JSON-RPC handler failed.', [
+            'exception' => $error,
+            'method' => $message->getMethod(),
+        ]);
+    },
+);
 ```
 
-### Long-running requests and cancellation
+### JSON values
 
-Each request handler runs in its own coroutine, so it may use suspending Amp
-APIs without blocking the peer. The dispatcher creates an Amp `Cancellation`
-for every inbound request and passes it as the optional second argument. The
-callable type accepts user-defined handlers both with and without this argument,
-so static analysis does not require a wrapper. Internally implemented PHP
-callables must accept both arguments. A handler that supports cancellation
-passes it to Amp APIs or checks it between units of work:
+Incoming JSON values keep their shape:
+
+- objects become `stdClass` instances;
+- arrays become PHP lists;
+- omitted `params` are passed as `null`;
+- explicit `[]` and `{}` remain distinguishable.
+
+The same mapping applies to results and remote error data. A handler may narrow
+its parameter type to the shape expected by its method.
+
+Outbound methods accept `array|object|null` parameters. `null`, the default,
+omits `params`; use `[]` for an empty JSON array and `new \stdClass()` for an
+empty JSON object:
+
+```php
+$peer->notify('without-params');
+$peer->notify('positional', []);
+$peer->notify('named', new \stdClass());
+```
+
+Associative arrays follow PHP's `json_encode()` behavior, but `stdClass` is
+recommended when an object shape must round-trip exactly.
+
+### Accessing the current message
+
+Request handlers may accept `Cancellation` and `JsonRpcMessage` as trailing
+arguments. Use the message to access the request ID or method:
 
 ```php
 use Amp\Cancellation;
-use function Amp\delay;
+use Fabpot\JsonRpc\JsonRpcMessage;
 
-function processItems(array $items, Cancellation $cancellation): array
-{
-    $results = [];
-
-    foreach ($items as $item) {
-        $cancellation->throwIfRequested();
-        delay(0.1, cancellation: $cancellation);
-        $results[] = processItem($item);
-    }
-
-    return $results;
-}
+$dispatcher->onRequest(
+    'inspect',
+    function (
+        \stdClass $params,
+        Cancellation $cancellation,
+        JsonRpcMessage $message,
+    ): \stdClass {
+        return (object) [
+            'id' => $message->getId(),
+            'method' => $message->getMethod(),
+        ];
+    },
+);
 ```
 
-Cancellation is cooperative: the handler notices a cancellation request when it
-reaches `throwIfRequested()` or suspends in an Amp API that received the
-`Cancellation`. The dispatcher also requests cancellation of every active
-handler when the transport closes.
+Notification handlers may accept `JsonRpcMessage` as their second argument:
 
-Request handlers do not need to create a `Future` or call `Amp\async()`; the
-dispatcher already runs them in a coroutine:
+```php
+$dispatcher->onNotification(
+    'inspect',
+    function (\stdClass $params, JsonRpcMessage $message): void {
+        // ...
+    },
+);
+```
+
+Handlers that do not need these arguments can omit them.
+
+### Canceling inbound work
+
+A request handler may accept an Amp `Cancellation` as its second argument. Pass
+it to cancellable Amp operations and check it during long-running work:
 
 ```php
 use Amp\Cancellation;
 use Amp\CancelledException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 
-$dispatcher->onRequest('run', function (stdClass $params, Cancellation $cancellation): array {
-    try {
-        return processItems($params->items, $cancellation);
-    } catch (CancelledException) {
-        throw new JsonRpcException(-32800, 'Request canceled.');
-    }
-});
+$dispatcher->onRequest(
+    'run',
+    function (\stdClass $params, Cancellation $cancellation): array {
+        try {
+            return processItems($params->items, $cancellation);
+        } catch (CancelledException) {
+            throw new JsonRpcException(-32800, 'Request canceled.');
+        }
+    },
+);
 ```
 
-JSON-RPC does not define the response to a canceled request, so the handler
-chooses the result or error. Here, `-32800` is an application-defined error
-code.
-
-JSON-RPC does not define a cancellation notification or its parameters. Before
-calling `listen()`, register the convention used by your protocol with
-`onCancel()`. Pass both the notification method and the parameter containing the
-ID of the inbound request to cancel:
-
-```php
-$dispatcher->onCancel('cancel', 'requestId');
-```
-
-For example, while the handler for this inbound request is running:
-
-```json
-{"jsonrpc":"2.0","id":42,"method":"run","params":{"items":[]}}
-```
-
-The remote peer can then send this notification. The registered notification
-handler calls `cancelRequest(42)`:
-
-```json
-{"jsonrpc":"2.0","method":"cancel","params":{"requestId":42}}
-```
-
-The Language Server Protocol uses a different notification method and names the
-ID parameter `id`:
+JSON-RPC does not define a cancellation notification. Register the convention
+used by your protocol before calling `listen()`:
 
 ```php
 $dispatcher->onCancel('$/cancelRequest', 'id');
 ```
 
-For a cancellation payload that cannot be described by a top-level parameter,
-use `onNotification()` and `cancelRequest()` directly. `cancelRequest()` returns
-the number of matching active handlers, including concurrent requests sharing
-an ID:
+For a custom payload, handle the notification and call `cancelRequest()`
+directly. It returns the number of active handlers that matched the ID:
 
 ```php
-$dispatcher->onNotification('custom/cancel', function (stdClass $params) use ($dispatcher, $logger): void {
-    $count = $dispatcher->cancelRequest($params->request->id);
-    $logger->debug('Canceled JSON-RPC handlers.', ['count' => $count]);
-});
+$dispatcher->onNotification(
+    'custom/cancel',
+    function (\stdClass $params) use ($dispatcher): void {
+        $dispatcher->cancelRequest($params->requestId);
+    },
+);
 ```
 
-```mermaid
-sequenceDiagram
-    participant Remote as Remote peer
-    participant Peer as JsonRpcPeer
-    participant Dispatcher as JsonRpcDispatcher
-    participant Handler as Request handler
+Active request handlers are also canceled when the peer closes.
 
-    Remote->>Peer: Request, id 42
-    Peer->>Dispatcher: Dispatch request
-    Dispatcher->>Handler: Handle with Cancellation
-    Handler-->>Handler: Suspend on cancellable work
-    Remote->>Peer: Cancellation notification, id 42
-    Peer->>Dispatcher: Dispatch notification
-    Dispatcher->>Dispatcher: onCancel extracts id and cancels request 42
-    Dispatcher-->>Handler: Cancellation requested
-    Handler-->>Dispatcher: Throw protocol-specific JsonRpcException
-    Dispatcher-->>Peer: Error response, id 42
-    Peer-->>Remote: Error response, id 42
-```
+## Sending requests and notifications
 
-### Emitting requests and notifications
-
-Outbound requests return an Amp `Future`. Responses are matched by ID, so they
-can arrive in any order. Remote JSON-RPC errors throw a `JsonRpcException` when
-the future is awaited.
-
-For protocols that cancel an outbound request by ID, use `startRequest()` to
-get both the generated ID and the future:
+Run the listener in a separate coroutine before awaiting an outbound request:
 
 ```php
-$request = $peer->startRequest('compact', $params);
-$peer->notify('cancel', (object) ['requestId' => $request->getId()]);
-$result = $request->getFuture()->await();
+use function Amp\async;
+
+$listener = async($peer->listen(...));
+
+$result = $peer->request(
+    'workspace/status',
+    (object) ['workspace' => '/project'],
+)->await();
 ```
 
-JSON-RPC does not define a cancellation notification, so the application remains
-responsible for its method and payload.
+Remote JSON-RPC errors are raised as `JsonRpcException` when the future is
+awaited. Responses are matched by ID and may arrive in any order.
 
-Pass an Amp `Cancellation` to bound how long the local caller remains interested
-in a response. `TimeoutCancellation` provides a deadline:
+Send a notification when no response is expected:
+
+```php
+$peer->notify('progress', (object) ['percent' => 42]);
+```
+
+### Timeouts and cancellation
+
+Pass an Amp `Cancellation` to stop waiting for an outbound response. A
+`TimeoutCancellation` provides a deadline:
 
 ```php
 use Amp\TimeoutCancellation;
@@ -426,49 +301,37 @@ $result = $peer->request(
 )->await();
 ```
 
-Cancellation already requested before the peer starts writing prevents the
-request from being written. Once writing has started, cancellation fails its
-future with `CancelledException`, releases its correlation state, and causes any
-late response to be ignored. It does not retract an in-progress transport write
-or send a protocol-specific
-cancellation notification. Use `startRequest()` when such a notification needs
-the generated request ID.
+Cancellation fails the returned future and late responses are ignored. It does
+not send a protocol-specific cancellation notification.
 
-`listen()` must process the response while the request is pending, so run it in
-a separate coroutine. Await the listener when shutting down to ensure it has
-stopped:
+When a protocol requires such a notification, use `startRequest()` to access
+the generated ID and send the notification only when the application decides to
+cancel:
 
 ```php
-$listener = \Amp\async($peer->listen(...));
+use Fabpot\JsonRpc\Exception\JsonRpcException;
 
-$result = $peer->request(
-    'workspace/status',
-    (object) ['workspace' => '/project'],
-)->await();
+$request = $peer->startRequest('compact', $params);
 
-$peer->close();
-$listener->await();
+if ($shouldCancel) {
+    $peer->notify('$/cancelRequest', (object) ['id' => $request->getId()]);
+}
+
+try {
+    $result = $request->getFuture()->await();
+} catch (JsonRpcException $e) {
+    // Handle the cancellation error defined by the remote protocol.
+}
 ```
 
-Calling `close()` closes the owned transport, including its underlying streams
-or WebSocket, and stops `listen()`. A remote transport closure stops it as well.
-The peer implements `Amp\Closable`: `isClosed()` reports whether the peer has
-fully closed, and `onClose()` registers callbacks for local or remote closure.
-When shutdown begins, all outstanding outbound requests fail with a
-`Fabpot\JsonRpc\Exception\ConnectionClosedException`. New requests,
-notifications, and batches throw the same exception.
+The protocol notification and local Amp cancellation are separate concerns.
+Pass a `Cancellation` to `startRequest()` when the application should also stop
+waiting locally.
 
-The peer can also push notifications to the other side at any time:
+### Batches
 
-```php
-$peer->notify('progress', (object) ['percent' => 42]);
-```
-
-#### Batches
-
-For protocols that use JSON-RPC batches, pass explicit request and notification
-entries. The returned array contains futures for request entries only, in the
-same order as those requests:
+Use explicit request and notification entries. The returned array contains one
+future for each `BatchRequest`, in request order:
 
 ```php
 use Fabpot\JsonRpc\BatchNotification;
@@ -484,7 +347,7 @@ $status = $status->await();
 $configuration = $configuration->await();
 ```
 
-Each `BatchRequest` may receive its own `Cancellation`:
+Each request entry can have its own cancellation:
 
 ```php
 use Amp\TimeoutCancellation;
@@ -495,51 +358,67 @@ use Amp\TimeoutCancellation;
 );
 ```
 
-A request canceled before the batch write is omitted without aborting sibling
-entries; its future still occupies the corresponding request position and fails
-with `CancelledException`. If every request entry is already canceled, no empty
-batch is written.
+## Limits and shutdown
 
-When the peer receives a batch, it sends one response after every request in the
-batch settles. Notifications are omitted, and response entries may follow
-settlement order rather than input order. For example, this inbound batch:
+The peer accepts 64 concurrent inbound requests and 128 batch entries by
+default. Configure these limits when creating it:
 
-```json
-[
-    {"jsonrpc":"2.0","id":1,"method":"slow"},
-    {"jsonrpc":"2.0","method":"progress"},
-    {"jsonrpc":"2.0","id":2,"method":"fast"}
-]
+```php
+$peer = new JsonRpcPeer(
+    $transport,
+    maximumConcurrentInboundRequests: 32,
+    maximumBatchEntries: 64,
+);
 ```
 
-can produce this response if `fast` settles before `slow`:
+Requests received above the concurrency limit get a server-overloaded error.
+Messages above transport limits and batches above the batch limit are rejected.
 
-```json
-[
-    {"jsonrpc":"2.0","id":2,"result":"fast"},
-    {"jsonrpc":"2.0","id":1,"result":"slow"}
-]
+Call `close()` to stop the peer and close its transport. Outstanding outbound
+requests then fail with `ConnectionClosedException`:
+
+```php
+$peer->close();
+$listener->await();
 ```
+
+`isClosed()` reports whether shutdown has completed, and `onClose()` registers a
+callback for local or remote closure.
 
 ## Traffic logging
 
-Pass a `TrafficLoggerInterface` to the peer to record raw inbound and outbound
-messages without transport framing. `PsrTrafficLogger` forwards them to a PSR-3 logger at the `debug` level
-and recursively redacts common credential keys and credentials in values that
-are URLs. Pass additional protocol-specific sensitive keys as the second
-argument:
+Install the optional PSR logger dependency:
+
+```bash
+composer require "psr/log:^1|^2|^3"
+```
+
+Wrap a PSR logger with `PsrTrafficLogger` and pass it to the peer:
 
 ```php
+use Fabpot\JsonRpc\JsonRpcPeer;
 use Fabpot\JsonRpc\PsrTrafficLogger;
-use Fabpot\JsonRpc\StreamJsonRpcTransport;
 
 $trafficLogger = new PsrTrafficLogger($logger, [
     'privateKey',
 ]);
-$peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, $output), $trafficLogger);
+$peer = new JsonRpcPeer($transport, $trafficLogger);
 ```
 
-The adapter always redacts common credential keys such as `authorization`,
-`token`, `password`, and `secret`. Redaction is intentionally conservative and
-does not inspect arbitrary text for embedded credentials. Install
-`psr/log:^1|^2|^3` to use this optional adapter.
+Common credential fields and configured keys are redacted before messages are
+logged. Because logging complete payloads can expose application data, review
+your logger configuration before enabling it in production.
+
+## Extending the package
+
+The peer, dispatcher, built-in transports, and value objects are final.
+Integrate other connection types with `JsonRpcTransportInterface`. A custom
+transport must yield complete messages, serialize concurrent writes, and provide
+an idempotent `close()` that unblocks an active `receive()` call. The peer owns
+and closes it.
+
+Custom traffic loggers implement `TrafficLoggerInterface`. They are responsible
+for appropriate redaction and must not throw because logging failures abort the
+affected peer operation. Request and notification handlers are plain callables,
+so application-specific dispatching can be composed around the provided
+dispatcher without subclassing it.
