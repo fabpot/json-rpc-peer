@@ -42,6 +42,30 @@ final class StreamJsonRpcTransportTest extends TestCase
         $this->assertNull($transport->receive());
     }
 
+    public function testReceivesMessagesAcrossDeterministicChunkings(): void
+    {
+        $expected = [
+            '{"ascii":1}',
+            '{"utf8":"é🙂"}',
+            '{"empty":{}}',
+            '{"final":true}',
+        ];
+        $wire = $expected[0] . "\r\n"
+            . $expected[1] . "\n"
+            . $expected[2] . "\r\n"
+            . $expected[3];
+
+        foreach (DeterministicChunkings::of($wire) as $case => $chunks) {
+            $transport = new StreamJsonRpcTransport(new ReadableIterableStream($chunks), new CapturingStream());
+            $actual = [];
+            while (null !== $message = $transport->receive()) {
+                $actual[] = $message;
+            }
+
+            $this->assertSame($expected, $actual, $case);
+        }
+    }
+
     public function testAcceptsMessageAtConfiguredLimitWithCrLfDelimiter(): void
     {
         $transport = new StreamJsonRpcTransport(

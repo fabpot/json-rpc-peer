@@ -46,6 +46,30 @@ final class ContentLengthJsonRpcTransportTest extends TestCase
         $this->assertNull($transport->receive());
     }
 
+    public function testReceivesFramesAcrossDeterministicChunkings(): void
+    {
+        $expected = [
+            '{"ascii":1}',
+            '{"utf8":"é🙂"}',
+            '[]',
+            '{"final":true}',
+        ];
+        $wire = "Content-Type: application/json\r\ncOnTeNt-LeNgTh: 000" . \strlen($expected[0]) . "\r\n\r\n" . $expected[0]
+            . "X-Test: extra\r\nContent-Length: " . \strlen($expected[1]) . "\r\n\r\n" . $expected[1]
+            . self::frame($expected[2])
+            . self::frame($expected[3]);
+
+        foreach (DeterministicChunkings::of($wire) as $case => $chunks) {
+            $transport = new ContentLengthJsonRpcTransport(new ReadableIterableStream($chunks), new CapturingStream());
+            $actual = [];
+            while (null !== $message = $transport->receive()) {
+                $actual[] = $message;
+            }
+
+            $this->assertSame($expected, $actual, $case);
+        }
+    }
+
     public function testPeerExchangesFramedJsonRpcMessages(): void
     {
         $request = '{"jsonrpc":"2.0","id":1,"method":"sum","params":[1,2,3]}';
