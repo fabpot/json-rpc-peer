@@ -15,6 +15,7 @@ use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableBuffer;
 use Amp\Cancellation;
 use Amp\CancelledException;
+use Fabpot\JsonRpc\Exception\ConnectionClosedException;
 use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 use Fabpot\JsonRpc\Exception\JsonRpcException;
 use Fabpot\JsonRpc\Exception\RuntimeException;
@@ -208,24 +209,35 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'done']], $output->messages());
     }
 
-    public function testConnectionClosureCancelsActiveRequestHandlers(): void
+    public function testConnectionClosureMarksPeerClosedAndCancelsActiveRequestHandlers(): void
     {
-        $output = $this->drive(
-            '{"jsonrpc":"2.0","id":1,"method":"wait"}',
-            static function (JsonRpcDispatcher $dispatcher): void {
-                $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation): string {
-                    try {
-                        delay(10, cancellation: $cancellation);
-                    } catch (CancelledException) {
-                        return 'canceled';
-                    }
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer('{"jsonrpc":"2.0","id":1,"method":"wait"}'), $output));
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $closedWhileDraining = false;
+        $outboundRejected = false;
+        $dispatcher->onRequest('wait', static function (array|object|null $params, Cancellation $cancellation) use ($peer, &$closedWhileDraining, &$outboundRejected): string {
+            try {
+                delay(10, cancellation: $cancellation);
+            } catch (CancelledException) {
+                $closedWhileDraining = $peer->isClosed();
+                try {
+                    $peer->notify('late');
+                } catch (ConnectionClosedException) {
+                    $outboundRejected = true;
+                }
 
-                    return 'completed';
-                });
-            },
-        );
+                return 'canceled';
+            }
 
-        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled']], $output);
+            return 'completed';
+        });
+
+        $peer->listen();
+
+        $this->assertTrue($closedWhileDraining);
+        $this->assertTrue($outboundRejected);
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 'canceled']], $output->messages());
     }
 
     public function testConnectionClosureCancelsConcurrentRequestsSharingAnId(): void

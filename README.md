@@ -384,8 +384,9 @@ $peer->close();
 $listener->await();
 ```
 
-`isClosed()` reports whether shutdown has completed, and `onClose()` registers a
-callback for local or remote closure.
+`isClosed()` reports whether shutdown has started, so it becomes true as soon as
+outbound work is rejected. `onClose()` registers a callback that runs after local
+or remote shutdown completes.
 
 ## Traffic logging
 

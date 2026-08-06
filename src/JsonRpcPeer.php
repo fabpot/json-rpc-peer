@@ -153,7 +153,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
     public function isClosed(): bool
     {
-        return $this->closed;
+        return $this->shutdownStarted;
     }
 
     public function onClose(\Closure $onClose): void

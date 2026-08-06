@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Reject handler parameter shape mismatches as invalid params
+- Report peers as closed as soon as shutdown starts
 - Make peer shutdown deterministic and reject outbound work after shutdown begins
 - Propagate response delivery failures without misclassifying them as handler errors
 - Drain all active request handlers before a listener returns
