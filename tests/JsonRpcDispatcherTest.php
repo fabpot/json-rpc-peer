@@ -43,6 +43,57 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => ['echoed' => 42]]], $output);
     }
 
+    public function testPassesMessageContextToRequestHandlers(): void
+    {
+        $context = null;
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","id":"request-1","method":"inspect","params":{"value":42}}',
+            static function (JsonRpcDispatcher $dispatcher) use (&$context): void {
+                $dispatcher->onRequest('inspect', static function (\stdClass $params, Cancellation $cancellation, JsonRpcMessage $message) use (&$context): int {
+                    $context = [$params, $cancellation, $message];
+                    $value = $params->value ?? null;
+                    if (!\is_int($value)) {
+                        throw new \InvalidArgumentException('Expected an integer value.');
+                    }
+
+                    return $value;
+                });
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 'request-1', 'result' => 42]], $output);
+        $this->assertIsArray($context);
+        [$params, $cancellation, $message] = $context;
+        $this->assertInstanceOf(\stdClass::class, $params);
+        $this->assertInstanceOf(Cancellation::class, $cancellation);
+        $this->assertInstanceOf(JsonRpcMessage::class, $message);
+        $this->assertSame('request-1', $message->getId());
+        $this->assertSame('inspect', $message->getMethod());
+        $this->assertSame($params, $message->getParams());
+    }
+
+    public function testPassesMessageContextToNotificationHandlers(): void
+    {
+        $context = null;
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","method":"inspect","params":{"value":42}}',
+            static function (JsonRpcDispatcher $dispatcher) use (&$context): void {
+                $dispatcher->onNotification('inspect', static function (\stdClass $params, JsonRpcMessage $message) use (&$context): void {
+                    $context = [$params, $message];
+                });
+            },
+        );
+
+        $this->assertSame([], $output);
+        $this->assertIsArray($context);
+        [$params, $message] = $context;
+        $this->assertInstanceOf(\stdClass::class, $params);
+        $this->assertInstanceOf(JsonRpcMessage::class, $message);
+        $this->assertTrue($message->isNotification());
+        $this->assertSame('inspect', $message->getMethod());
+        $this->assertSame($params, $message->getParams());
+    }
+
     public function testRejectsDuplicateRequestHandlerRegistration(): void
     {
         $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));

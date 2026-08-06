@@ -56,7 +56,7 @@ final class JsonRpcDispatcher
     /**
      * @template TParams of array<array-key, mixed>|object|null
      *
-     * @param callable(TParams): mixed|callable(TParams, Cancellation): mixed $handler
+     * @param callable(TParams): mixed|callable(TParams, Cancellation): mixed|callable(TParams, Cancellation, JsonRpcMessage): mixed $handler
      */
     public function onRequest(string $method, callable $handler): void
     {
@@ -70,7 +70,7 @@ final class JsonRpcDispatcher
     /**
      * @template TParams of array<array-key, mixed>|object|null
      *
-     * @param callable(TParams): void $handler
+     * @param callable(TParams): void|callable(TParams, JsonRpcMessage): void $handler
      */
     public function onNotification(string $method, callable $handler): void
     {
@@ -135,7 +135,7 @@ final class JsonRpcDispatcher
             $handler = $this->notificationHandlers[$method] ?? null;
             if (null !== $handler) {
                 try {
-                    $handler($params);
+                    $handler($params, $message);
                 } catch (\Throwable $e) {
                     $this->reportUnhandledError($e, $message);
                 }
@@ -159,7 +159,7 @@ final class JsonRpcDispatcher
         return async(function () use ($handler, $message, $params, $responder, $key, $deferredCancellation): void {
             try {
                 try {
-                    $result = $handler($params, $deferredCancellation->getCancellation());
+                    $result = $handler($params, $deferredCancellation->getCancellation(), $message);
                 } catch (JsonRpcException $e) {
                     try {
                         $responder->reject($e->getCode(), $e->getMessage(), $e->getData());

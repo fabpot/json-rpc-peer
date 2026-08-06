@@ -14,6 +14,7 @@
 - Exercise stream and content-length framing across deterministic byte partitions
 - Declare and test supported optional dependency ranges and no-dev installation
 - Reject object parameters that serialize to non-structured JSON values
+- Pass the inbound message as optional request and notification handler context
 
 ## 0.5.0 - 2026-07-30
 
