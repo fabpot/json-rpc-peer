@@ -11,6 +11,8 @@
 
 namespace Fabpot\JsonRpc;
 
+use Amp\Cancellation;
+
 final class BatchRequest
 {
     /**
@@ -19,6 +21,7 @@ final class BatchRequest
     public function __construct(
         private readonly string $method,
         private readonly array|object|null $params = null,
+        private readonly ?Cancellation $cancellation = null,
     ) {}
 
     public function getMethod(): string
@@ -32,5 +35,11 @@ final class BatchRequest
     public function getParams(): array|object|null
     {
         return $this->params;
+    }
+
+    /** @internal */
+    public function getCancellation(): ?Cancellation
+    {
+        return $this->cancellation;
     }
 }

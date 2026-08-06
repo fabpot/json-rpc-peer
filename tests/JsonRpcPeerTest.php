@@ -14,7 +14,11 @@ namespace Fabpot\JsonRpc\Tests;
 use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableBuffer;
 use Amp\Cancellation;
+use Amp\CancelledException;
+use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
+use Amp\TimeoutCancellation;
+use Amp\TimeoutException;
 use Fabpot\JsonRpc\BatchNotification;
 use Fabpot\JsonRpc\BatchRequest;
 use Fabpot\JsonRpc\Exception\ConnectionClosedException;
@@ -36,6 +40,7 @@ use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use Fabpot\JsonRpc\TrafficLoggerInterface;
 
 use function Amp\async;
+use function Amp\delay;
 
 final class JsonRpcPeerTest extends TestCase
 {
@@ -760,6 +765,245 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertInstanceOf(\stdClass::class, $result->items[0]);
         $this->assertSame('one', $result->items[0]->name);
         $this->assertSame([], $array->await());
+    }
+
+    public function testAlreadyCancelledRequestIsNotSentOrAssignedAnId(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+        $deferredCancellation = new DeferredCancellation();
+        $deferredCancellation->cancel();
+
+        try {
+            $peer->request('cancelled', cancellation: $deferredCancellation->getCancellation());
+            $this->fail('The cancellation was not raised.');
+        } catch (CancelledException) {
+        }
+
+        $request = $peer->startRequest('next');
+        $request->getFuture()->ignore();
+        $this->assertSame(1, $request->getId());
+        $this->assertSame('{"jsonrpc":"2.0","id":1,"method":"next"}' . "\n", $output->contents());
+    }
+
+    public function testCancellationDuringSubscriptionPreventsSend(): void
+    {
+        $cancellation = new class implements Cancellation {
+            private readonly CancelledException $exception;
+            private bool $requested = false;
+            private bool $unsubscribed = false;
+
+            public function __construct()
+            {
+                $this->exception = new CancelledException();
+            }
+
+            public function subscribe(\Closure $callback): string
+            {
+                $this->requested = true;
+                $callback($this->exception);
+
+                return 'subscription';
+            }
+
+            public function unsubscribe(string $id): void
+            {
+                $this->unsubscribed = true;
+            }
+
+            public function isRequested(): bool
+            {
+                return $this->requested;
+            }
+
+            public function throwIfRequested(): void
+            {
+                if ($this->requested) {
+                    throw $this->exception;
+                }
+            }
+
+            public function wasUnsubscribed(): bool
+            {
+                return $this->unsubscribed;
+            }
+        };
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+
+        try {
+            $peer->request('cancelled', cancellation: $cancellation);
+            $this->fail('The cancellation was not raised.');
+        } catch (CancelledException) {
+        }
+
+        $next = $peer->startRequest('next');
+        $next->getFuture()->ignore();
+        $this->assertSame(2, $next->getId());
+        $this->assertTrue($cancellation->wasUnsubscribed());
+        $this->assertSame('{"jsonrpc":"2.0","id":2,"method":"next"}' . "\n", $output->contents());
+    }
+
+    public function testCancellationAfterSendFailsFutureAndIgnoresLateResponse(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(
+            new ReadableBuffer('{"jsonrpc":"2.0","id":1,"result":"late"}'),
+            $output,
+        ));
+        $deferredCancellation = new DeferredCancellation();
+        $cancellation = $deferredCancellation->getCancellation();
+        $response = $peer->request('slow', cancellation: $cancellation);
+
+        $deferredCancellation->cancel();
+        try {
+            $cancellation->throwIfRequested();
+            $this->fail('The cancellation was not raised.');
+        } catch (CancelledException $expected) {
+        }
+
+        try {
+            $response->await();
+            $this->fail('The request Future was not canceled.');
+        } catch (CancelledException $actual) {
+            $this->assertSame($expected, $actual);
+        }
+
+        $peer->listen();
+        $this->assertSame('{"jsonrpc":"2.0","id":1,"method":"slow"}' . "\n", $output->contents());
+    }
+
+    public function testResponseWinsRaceWithLaterCancellation(): void
+    {
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(
+            new ReadableBuffer('{"jsonrpc":"2.0","id":1,"result":"done"}'),
+            new CapturingStream(),
+        ));
+        $deferredCancellation = new DeferredCancellation();
+        $response = $peer->request('fast', cancellation: $deferredCancellation->getCancellation());
+
+        $peer->listen();
+        $deferredCancellation->cancel();
+        delay(0);
+
+        $this->assertSame('done', $response->await());
+    }
+
+    public function testFirstOfCancellationAndConnectionCloseWins(): void
+    {
+        $firstPeer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $firstCancellation = new DeferredCancellation();
+        $first = $firstPeer->request('first', cancellation: $firstCancellation->getCancellation());
+        $firstCancellation->cancel();
+        delay(0);
+        $firstPeer->close();
+
+        try {
+            $first->await();
+            $this->fail('The first request was not canceled.');
+        } catch (CancelledException) {
+        }
+
+        $secondPeer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
+        $secondCancellation = new DeferredCancellation();
+        $second = $secondPeer->request('second', cancellation: $secondCancellation->getCancellation());
+        $secondPeer->close();
+        $secondCancellation->cancel();
+        delay(0);
+
+        $this->expectException(ConnectionClosedException::class);
+        $second->await();
+    }
+
+    public function testTimeoutCancellationFailsSentRequest(): void
+    {
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+        $response = $peer->request('slow', cancellation: new TimeoutCancellation(0));
+        delay(0);
+
+        try {
+            $response->await();
+            $this->fail('The request did not time out.');
+        } catch (CancelledException $e) {
+            $this->assertInstanceOf(TimeoutException::class, $e->getPrevious());
+        }
+
+        $this->assertSame('{"jsonrpc":"2.0","id":1,"method":"slow"}' . "\n", $output->contents());
+    }
+
+    public function testBatchOmitsAlreadyCancelledRequestsWithoutConsumingIds(): void
+    {
+        $cancellation = new DeferredCancellation();
+        $cancellation->cancel();
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(
+            new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"result":"done"}]'),
+            $output,
+        ));
+
+        [$cancelled, $active] = $peer->batch(
+            new BatchRequest('cancelled', cancellation: $cancellation->getCancellation()),
+            new BatchNotification('note'),
+            new BatchRequest('active'),
+        );
+        $peer->listen();
+
+        try {
+            $cancelled->await();
+            $this->fail('The batch request was not canceled.');
+        } catch (CancelledException) {
+        }
+        $this->assertSame('done', $active->await());
+        $this->assertSame([[
+            ['jsonrpc' => '2.0', 'method' => 'note'],
+            ['jsonrpc' => '2.0', 'method' => 'active', 'id' => 1],
+        ]], $output->messages());
+    }
+
+    public function testBatchOfAlreadyCancelledRequestsWritesNothing(): void
+    {
+        $firstCancellation = new DeferredCancellation();
+        $firstCancellation->cancel();
+        $secondCancellation = new DeferredCancellation();
+        $secondCancellation->cancel();
+        $output = new CapturingStream();
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), $output));
+
+        $responses = $peer->batch(
+            new BatchRequest('first', cancellation: $firstCancellation->getCancellation()),
+            new BatchRequest('second', cancellation: $secondCancellation->getCancellation()),
+        );
+
+        $this->assertSame('', $output->contents());
+        foreach ($responses as $response) {
+            try {
+                $response->await();
+                $this->fail('The batch request was not canceled.');
+            } catch (CancelledException) {
+            }
+        }
+    }
+
+    public function testCancelingOneSentBatchRequestDoesNotAffectSibling(): void
+    {
+        $input = new ReadableBuffer('[{"jsonrpc":"2.0","id":1,"result":"late"},{"jsonrpc":"2.0","id":2,"result":"done"}]');
+        $peer = new JsonRpcPeer(new StreamJsonRpcTransport($input, new CapturingStream()));
+        $cancellation = new DeferredCancellation();
+
+        [$cancelled, $active] = $peer->batch(
+            new BatchRequest('cancelled', cancellation: $cancellation->getCancellation()),
+            new BatchRequest('active'),
+        );
+        $cancellation->cancel();
+        try {
+            $cancelled->await();
+            $this->fail('The batch request was not canceled.');
+        } catch (CancelledException) {
+        }
+
+        $peer->listen();
+        $this->assertSame('done', $active->await());
     }
 
     public function testOutboundRequestsResolveOutOfOrder(): void

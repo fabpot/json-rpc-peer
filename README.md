@@ -393,12 +393,33 @@ get both the generated ID and the future:
 
 ```php
 $request = $peer->startRequest('compact', $params);
-$peer->notify('cancel', ['requestId' => $request->getId()]);
+$peer->notify('cancel', (object) ['requestId' => $request->getId()]);
 $result = $request->getFuture()->await();
 ```
 
 JSON-RPC does not define a cancellation notification, so the application remains
 responsible for its method and payload.
+
+Pass an Amp `Cancellation` to bound how long the local caller remains interested
+in a response. `TimeoutCancellation` provides a deadline:
+
+```php
+use Amp\TimeoutCancellation;
+
+$result = $peer->request(
+    'workspace/status',
+    (object) ['workspace' => '/project'],
+    new TimeoutCancellation(5),
+)->await();
+```
+
+Cancellation already requested before the peer starts writing prevents the
+request from being written. Once writing has started, cancellation fails its
+future with `CancelledException`, releases its correlation state, and causes any
+late response to be ignored. It does not retract an in-progress transport write
+or send a protocol-specific
+cancellation notification. Use `startRequest()` when such a notification needs
+the generated request ID.
 
 `listen()` must process the response while the request is pending, so run it in
 a separate coroutine. Await the listener when shutting down to ensure it has
@@ -407,9 +428,10 @@ stopped:
 ```php
 $listener = \Amp\async($peer->listen(...));
 
-$result = $peer->request('workspace/status', [
-    'workspace' => '/project',
-])->await();
+$result = $peer->request(
+    'workspace/status',
+    (object) ['workspace' => '/project'],
+)->await();
 
 $peer->close();
 $listener->await();
@@ -448,6 +470,22 @@ use Fabpot\JsonRpc\BatchRequest;
 $status = $status->await();
 $configuration = $configuration->await();
 ```
+
+Each `BatchRequest` may receive its own `Cancellation`:
+
+```php
+use Amp\TimeoutCancellation;
+
+[$slow, $fast] = $peer->batch(
+    new BatchRequest('slow', cancellation: new TimeoutCancellation(1)),
+    new BatchRequest('fast'),
+);
+```
+
+A request canceled before the batch write is omitted without aborting sibling
+entries; its future still occupies the corresponding request position and fails
+with `CancelledException`. If every request entry is already canceled, no empty
+batch is written.
 
 When the peer receives a batch, it sends one response after every request in the
 batch settles. Notifications are omitted, and response entries may follow

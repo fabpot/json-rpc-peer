@@ -12,6 +12,7 @@
 namespace Fabpot\JsonRpc;
 
 use Amp\Cancellation;
+use Amp\CancelledException;
 use Amp\Closable;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
@@ -47,7 +48,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     private bool $closed = false;
     private bool $transportClosed = false;
 
-    /** @var array<string, DeferredFuture<mixed>> */
+    /** @var array<string, PendingRequest> */
     private array $pendingRequests = [];
 
     /** @var array<int, Future<mixed>> */
@@ -194,12 +195,11 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
 
         $this->shutdownStarted = true;
         $this->connectionCancellation->cancel();
-        foreach ($this->pendingRequests as $deferred) {
-            if (!$deferred->isComplete()) {
-                $deferred->error(new ConnectionClosedException('The JSON-RPC connection closed before a response was received.'));
-            }
-        }
+        $pendingRequests = $this->pendingRequests;
         $this->pendingRequests = [];
+        foreach ($pendingRequests as $pendingRequest) {
+            $pendingRequest->error(new ConnectionClosedException('The JSON-RPC connection closed before a response was received.'));
+        }
     }
 
     private function finishShutdown(): void
@@ -257,23 +257,24 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
      *
      * @return Future<mixed>
      */
-    public function request(string $method, array|object|null $params = null): Future
+    public function request(string $method, array|object|null $params = null, ?Cancellation $cancellation = null): Future
     {
-        return $this->startRequest($method, $params)->getFuture();
+        return $this->startRequest($method, $params, $cancellation)->getFuture();
     }
 
     /**
      * @param array<array-key, mixed>|object|null $params
      */
-    public function startRequest(string $method, array|object|null $params = null): OutboundRequest
+    public function startRequest(string $method, array|object|null $params = null, ?Cancellation $cancellation = null): OutboundRequest
     {
         if ($this->shutdownStarted) {
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
 
+        $cancellation?->throwIfRequested();
         $id = $this->nextRequestId++;
-        $deferred = new DeferredFuture();
-        $this->pendingRequests[$this->requestKey($id)] = $deferred;
+        $key = $this->requestKey($id);
+        $pendingRequest = $this->registerPendingRequest($key, $cancellation);
 
         $payload = [
             'jsonrpc' => '2.0',
@@ -285,13 +286,16 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         }
 
         try {
+            $cancellation?->throwIfRequested();
             $this->writer->write($payload);
         } catch (\Throwable $e) {
-            unset($this->pendingRequests[$this->requestKey($id)]);
+            $this->detachPendingRequest($key, $pendingRequest);
+            $pendingRequest->abandon($e);
+
             throw $e;
         }
 
-        return new OutboundRequest($id, $deferred->getFuture());
+        return new OutboundRequest($id, $pendingRequest->getFuture());
     }
 
     /**
@@ -310,8 +314,10 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             throw new ConnectionClosedException('The JSON-RPC connection is closed.');
         }
 
-        $payloads = [];
-        $requestKeys = [];
+        /** @var list<array{payload: array<string, mixed>}|array{payload: array<string, mixed>, key: string, pendingRequest: PendingRequest, cancellation: Cancellation|null}> $records */
+        $records = [];
+        /** @var list<array{string|null, PendingRequest}> $createdRequests */
+        $createdRequests = [];
         $futures = [];
         foreach ($entries as $entry) {
             $payload = [
@@ -322,24 +328,71 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
                 $payload['params'] = $entry->getParams();
             }
 
-            if ($entry instanceof BatchRequest) {
-                $id = $this->nextRequestId++;
-                $deferred = new DeferredFuture();
-                $key = $this->requestKey($id);
-                $this->pendingRequests[$key] = $deferred;
-                $payload['id'] = $id;
-                $requestKeys[] = $key;
-                $futures[] = $deferred->getFuture();
+            if (!$entry instanceof BatchRequest) {
+                $records[] = ['payload' => $payload];
+
+                continue;
             }
 
-            $payloads[] = $payload;
+            $cancellation = $entry->getCancellation();
+            try {
+                $cancellation?->throwIfRequested();
+            } catch (CancelledException $e) {
+                $pendingRequest = new PendingRequest($cancellation);
+                $pendingRequest->error($e);
+                $createdRequests[] = [null, $pendingRequest];
+                $futures[] = $pendingRequest->getFuture();
+
+                continue;
+            }
+
+            $id = $this->nextRequestId++;
+            $key = $this->requestKey($id);
+            $pendingRequest = $this->registerPendingRequest($key, $cancellation);
+            $payload['id'] = $id;
+            $records[] = [
+                'payload' => $payload,
+                'key' => $key,
+                'pendingRequest' => $pendingRequest,
+                'cancellation' => $cancellation,
+            ];
+            $createdRequests[] = [$key, $pendingRequest];
+            $futures[] = $pendingRequest->getFuture();
+        }
+
+        $payloads = [];
+        foreach ($records as $record) {
+            if (!isset($record['pendingRequest'])) {
+                $payloads[] = $record['payload'];
+
+                continue;
+            }
+
+            try {
+                $record['cancellation']?->throwIfRequested();
+            } catch (CancelledException $e) {
+                $this->failPendingRequest($record['key'], $record['pendingRequest'], $e);
+
+                continue;
+            }
+
+            if ($this->isPendingRequest($record['key'], $record['pendingRequest'])) {
+                $payloads[] = $record['payload'];
+            }
+        }
+
+        if (!$payloads) {
+            return $futures;
         }
 
         try {
             $this->writer->write($payloads);
         } catch (\Throwable $e) {
-            foreach ($requestKeys as $key) {
-                unset($this->pendingRequests[$key]);
+            foreach ($createdRequests as [$key, $pendingRequest]) {
+                if (null !== $key) {
+                    $this->detachPendingRequest($key, $pendingRequest);
+                }
+                $pendingRequest->abandon($e);
             }
 
             throw $e;
@@ -567,57 +620,93 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         /** @var int|float|string $id */
 
         $key = $this->requestKey($id);
-        $deferred = $this->pendingRequests[$key] ?? null;
-        if (null === $deferred) {
+        $pendingRequest = $this->pendingRequests[$key] ?? null;
+        if (null === $pendingRequest) {
             return;
         }
 
         $hasResult = \array_key_exists('result', $data);
         $hasError = \array_key_exists('error', $data);
         if ('2.0' !== ($data['jsonrpc'] ?? null) || $hasResult === $hasError) {
-            $this->failInvalidResponse($key, $deferred);
+            $this->failInvalidResponse($key, $pendingRequest);
 
             return;
         }
 
         if ($hasResult) {
             if (JsonRpcValues::containsNonFiniteFloat($data['result'])) {
-                $this->failInvalidResponse($key, $deferred);
+                $this->failInvalidResponse($key, $pendingRequest);
 
                 return;
             }
 
-            unset($this->pendingRequests[$key]);
-            $deferred->complete($data['result']);
+            if ($this->detachPendingRequest($key, $pendingRequest)) {
+                $pendingRequest->complete($data['result']);
+            }
 
             return;
         }
 
         $error = $data['error'];
         if (!$error instanceof \stdClass) {
-            $this->failInvalidResponse($key, $deferred);
+            $this->failInvalidResponse($key, $pendingRequest);
 
             return;
         }
 
         $error = get_object_vars($error);
         if (!\is_int($error['code'] ?? null) || !\is_string($error['message'] ?? null) || JsonRpcValues::containsNonFiniteFloat($error['data'] ?? null)) {
-            $this->failInvalidResponse($key, $deferred);
+            $this->failInvalidResponse($key, $pendingRequest);
 
             return;
         }
 
-        unset($this->pendingRequests[$key]);
-        $deferred->error(new JsonRpcException($error['code'], $error['message'], $error['data'] ?? null));
+        if ($this->detachPendingRequest($key, $pendingRequest)) {
+            $pendingRequest->error(new JsonRpcException($error['code'], $error['message'], $error['data'] ?? null));
+        }
     }
 
-    /**
-     * @param DeferredFuture<mixed> $deferred
-     */
-    private function failInvalidResponse(string $key, DeferredFuture $deferred): void
+    private function registerPendingRequest(string $key, ?Cancellation $cancellation): PendingRequest
     {
+        $pendingRequest = new PendingRequest($cancellation);
+        $this->pendingRequests[$key] = $pendingRequest;
+        $pendingRequest->subscribeToCancellation(function (CancelledException $error) use ($key, $pendingRequest): void {
+            $this->failPendingRequest($key, $pendingRequest, $error);
+        });
+
+        return $pendingRequest;
+    }
+
+    private function isPendingRequest(string $key, PendingRequest $pendingRequest): bool
+    {
+        return ($this->pendingRequests[$key] ?? null) === $pendingRequest;
+    }
+
+    private function detachPendingRequest(string $key, PendingRequest $pendingRequest): bool
+    {
+        if (!$this->isPendingRequest($key, $pendingRequest)) {
+            return false;
+        }
+
         unset($this->pendingRequests[$key]);
-        $deferred->error(new InvalidResponseException('Received an invalid JSON-RPC response.'));
+
+        return true;
+    }
+
+    private function failPendingRequest(string $key, PendingRequest $pendingRequest, \Throwable $error): bool
+    {
+        if (!$this->detachPendingRequest($key, $pendingRequest)) {
+            return false;
+        }
+
+        $pendingRequest->error($error);
+
+        return true;
+    }
+
+    private function failInvalidResponse(string $key, PendingRequest $pendingRequest): void
+    {
+        $this->failPendingRequest($key, $pendingRequest, new InvalidResponseException('Received an invalid JSON-RPC response.'));
     }
 
     private function requestKey(int|float|string $id): string

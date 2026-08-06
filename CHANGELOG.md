@@ -9,6 +9,7 @@
 - Add configurable limits for concurrent inbound requests and batch entries
 - Enforce configurable inbound and outbound WebSocket message limits
 - Preserve JSON object, array, and omitted parameter shapes in public values
+- Add outbound request cancellation and timeout cleanup
 
 ## 0.5.0 - 2026-07-30
 
