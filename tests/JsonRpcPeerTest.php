@@ -13,6 +13,7 @@ namespace Fabpot\JsonRpc\Tests;
 
 use Amp\ByteStream\Pipe;
 use Amp\ByteStream\ReadableBuffer;
+use Amp\Cancellation;
 use Amp\DeferredFuture;
 use Fabpot\JsonRpc\BatchNotification;
 use Fabpot\JsonRpc\BatchRequest;
@@ -800,6 +801,50 @@ final class JsonRpcPeerTest extends TestCase
         $peer->listen();
 
         $this->assertSame('ok', $response->await());
+    }
+
+    public function testResponseFailureTakesPrecedenceOverCloseInducedReceiveFailure(): void
+    {
+        $transport = new class implements JsonRpcTransportInterface {
+            private int $receiveCount = 0;
+            /** @var DeferredFuture<void> */
+            private DeferredFuture $closed;
+
+            public function __construct()
+            {
+                $this->closed = new DeferredFuture();
+            }
+
+            public function receive(?Cancellation $cancellation = null): string
+            {
+                if (0 === $this->receiveCount++) {
+                    return '{"jsonrpc":"2.0","id":1,"method":"run"}';
+                }
+
+                $this->closed->getFuture()->await();
+
+                throw new RuntimeException('Receive woke after close.');
+            }
+
+            public function send(string $message): void
+            {
+                throw new RuntimeException('Response send failed.');
+            }
+
+            public function close(): void
+            {
+                if (!$this->closed->isComplete()) {
+                    $this->closed->complete();
+                }
+            }
+        };
+        $peer = new JsonRpcPeer($transport);
+        $dispatcher = new JsonRpcDispatcher($peer);
+        $dispatcher->onRequest('run', static fn(): string => 'done');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Response send failed.');
+        $peer->listen();
     }
 
     public function testStreamReadFailureThrowsRuntimeExceptionAndFailsPendingRequests(): void

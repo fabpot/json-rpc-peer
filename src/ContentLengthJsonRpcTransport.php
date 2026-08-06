@@ -182,6 +182,12 @@ final class ContentLengthJsonRpcTransport implements JsonRpcTransportInterface
             $chunk = null;
         } catch (StreamException $e) {
             throw new RuntimeException('Failed to read from the JSON-RPC connection.', 0, $e);
+        } catch (\Throwable $e) {
+            if (!$this->input->isClosed()) {
+                throw $e;
+            }
+
+            $chunk = null;
         }
 
         if (null === $chunk) {

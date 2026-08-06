@@ -28,6 +28,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\async;
+use function Amp\delay;
 
 final class ContentLengthJsonRpcTransportTest extends TestCase
 {
@@ -157,6 +158,18 @@ final class ContentLengthJsonRpcTransportTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('message exceeds');
         $transport->send('abc');
+    }
+
+    public function testCloseInterruptsPendingReceive(): void
+    {
+        $input = new Pipe(4096);
+        $transport = new ContentLengthJsonRpcTransport($input->getSource(), new CapturingStream());
+        $receive = async($transport->receive(...));
+        delay(0);
+
+        $transport->close();
+
+        $this->assertNull($receive->await());
     }
 
     public function testCloseAttemptsToCloseOutputWhenInputCloseFails(): void

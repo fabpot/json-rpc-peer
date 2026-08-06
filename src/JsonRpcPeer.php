@@ -12,7 +12,6 @@
 namespace Fabpot\JsonRpc;
 
 use Amp\Cancellation;
-use Amp\CancelledException;
 use Amp\Closable;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
@@ -108,7 +107,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             try {
                 async($this->listenLoop(...))->await();
             } catch (\Throwable $e) {
-                $error = $e;
+                $error = $this->inboundRequestError ?? $e;
             } finally {
                 $this->beginShutdown();
             }
@@ -164,15 +163,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     private function listenLoop(): void
     {
         while (true) {
-            try {
-                $message = $this->transport->receive($this->connectionCancellation->getCancellation());
-            } catch (CancelledException $e) {
-                if (!$this->shutdownStarted) {
-                    throw $e;
-                }
-
-                return;
-            }
+            $message = $this->transport->receive();
             if (null === $message) {
                 return;
             }

@@ -23,6 +23,7 @@ use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\async;
+use function Amp\delay;
 
 final class StreamJsonRpcTransportTest extends TestCase
 {
@@ -105,6 +106,18 @@ final class StreamJsonRpcTransportTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('message limit must be a positive integer');
         new StreamJsonRpcTransport(new ReadableIterableStream([]), new CapturingStream(), maximumMessageBytes: 0);
+    }
+
+    public function testCloseInterruptsPendingReceive(): void
+    {
+        $input = new Pipe(4096);
+        $transport = new StreamJsonRpcTransport($input->getSource(), new CapturingStream());
+        $receive = async($transport->receive(...));
+        delay(0);
+
+        $transport->close();
+
+        $this->assertNull($receive->await());
     }
 
     public function testCloseAttemptsToCloseOutputWhenInputCloseFails(): void
