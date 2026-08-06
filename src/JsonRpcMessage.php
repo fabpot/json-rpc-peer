@@ -21,13 +21,13 @@ use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 final class JsonRpcMessage
 {
     /**
-     * @param array<array-key, mixed>|object|null $params
+     * @param list<mixed>|\stdClass|null $params
      */
     private function __construct(
         private readonly int|float|string|null $id,
         private readonly bool $hasId,
         private readonly string $method,
-        private readonly array|object|null $params,
+        private readonly array|\stdClass|null $params,
     ) {}
 
     /**
@@ -47,7 +47,7 @@ final class JsonRpcMessage
 
         $params = null;
         if (\array_key_exists('params', $data)) {
-            if (!\is_array($data['params']) && !\is_object($data['params'])) {
+            if ((!\is_array($data['params']) || !array_is_list($data['params'])) && !$data['params'] instanceof \stdClass) {
                 throw new InvalidArgumentException('The params member must be an array or object.');
             }
             if (JsonRpcValues::containsNonFiniteFloat($data['params'])) {
@@ -77,9 +77,9 @@ final class JsonRpcMessage
     }
 
     /**
-     * @return array<array-key, mixed>|object|null
+     * @return list<mixed>|\stdClass|null
      */
-    public function getParams(): array|object|null
+    public function getParams(): array|\stdClass|null
     {
         return $this->params;
     }

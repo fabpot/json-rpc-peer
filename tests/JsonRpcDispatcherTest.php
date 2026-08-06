@@ -94,6 +94,25 @@ final class JsonRpcDispatcherTest extends TestCase
         $this->assertSame($params, $message->getParams());
     }
 
+    public function testInvokesInternalHandlersAccordingToTheirSupportedArity(): void
+    {
+        $reported = [];
+        $output = $this->drive(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"count\",\"params\":[1,2,3]}\n"
+            . '{"jsonrpc":"2.0","method":"flush"}',
+            static function (JsonRpcDispatcher $dispatcher) use (&$reported): void {
+                $dispatcher->onRequest('count', self::internalCountHandler());
+                $dispatcher->onNotification('flush', flush(...));
+                $dispatcher->onUnhandledError(static function (\Throwable $error) use (&$reported): void {
+                    $reported[] = $error;
+                });
+            },
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => 3]], $output);
+        $this->assertSame([], $reported);
+    }
+
     public function testRejectsDuplicateRequestHandlerRegistration(): void
     {
         $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer(''), new CapturingStream()));
@@ -674,6 +693,11 @@ final class JsonRpcDispatcherTest extends TestCase
             'id' => 3,
             'error' => ['code' => JsonRpcError::METHOD_NOT_FOUND, 'message' => 'Method not found'],
         ]], $output);
+    }
+
+    private static function internalCountHandler(): callable
+    {
+        return count(...);
     }
 
     /**

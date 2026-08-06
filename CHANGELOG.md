@@ -15,6 +15,7 @@
 - Declare and test supported optional dependency ranges and no-dev installation
 - Reject object parameters that serialize to non-structured JSON values
 - Pass the inbound message as optional request and notification handler context
+- Stabilize inbound parameter types and handler callable arity
 
 ## 0.5.0 - 2026-07-30
 

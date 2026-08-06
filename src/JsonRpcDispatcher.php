@@ -28,10 +28,10 @@ use function Amp\async;
  */
 final class JsonRpcDispatcher
 {
-    /** @var array<string, callable> */
+    /** @var array<string, array{0: \Closure, 1: int}> */
     private array $requestHandlers = [];
 
-    /** @var array<string, callable> */
+    /** @var array<string, array{0: \Closure, 1: int}> */
     private array $notificationHandlers = [];
 
     /** @var array<string, array<int, DeferredCancellation>> */
@@ -54,7 +54,7 @@ final class JsonRpcDispatcher
     }
 
     /**
-     * @template TParams of array<array-key, mixed>|object|null
+     * @template TParams of array<array-key, mixed>|\stdClass|null
      *
      * @param callable(TParams): mixed|callable(TParams, Cancellation): mixed|callable(TParams, Cancellation, JsonRpcMessage): mixed $handler
      */
@@ -64,11 +64,11 @@ final class JsonRpcDispatcher
             throw new InvalidArgumentException(sprintf('A request handler is already registered for method "%s".', $method));
         }
 
-        $this->requestHandlers[$method] = $handler;
+        $this->requestHandlers[$method] = $this->prepareHandler($handler, [Cancellation::class, JsonRpcMessage::class]);
     }
 
     /**
-     * @template TParams of array<array-key, mixed>|object|null
+     * @template TParams of array<array-key, mixed>|\stdClass|null
      *
      * @param callable(TParams): void|callable(TParams, JsonRpcMessage): void $handler
      */
@@ -78,7 +78,7 @@ final class JsonRpcDispatcher
             throw new InvalidArgumentException(sprintf('A notification handler is already registered for method "%s".', $method));
         }
 
-        $this->notificationHandlers[$method] = $handler;
+        $this->notificationHandlers[$method] = $this->prepareHandler($handler, [JsonRpcMessage::class]);
     }
 
     /**
@@ -91,7 +91,7 @@ final class JsonRpcDispatcher
 
     public function onCancel(string $method, string $idParameter): void
     {
-        $this->onNotification($method, function (array|object|null $params) use ($idParameter): void {
+        $this->onNotification($method, function (array|\stdClass|null $params) use ($idParameter): void {
             if (\is_object($params)) {
                 if (!property_exists($params, $idParameter)) {
                     return;
@@ -132,10 +132,11 @@ final class JsonRpcDispatcher
         $params = $message->getParams();
 
         if ($message->isNotification()) {
-            $handler = $this->notificationHandlers[$method] ?? null;
-            if (null !== $handler) {
+            $registeredHandler = $this->notificationHandlers[$method] ?? null;
+            if (null !== $registeredHandler) {
                 try {
-                    $handler($params, $message);
+                    [$handler, $argumentCount] = $registeredHandler;
+                    $handler(...\array_slice([$params, $message], 0, $argumentCount));
                 } catch (\Throwable $e) {
                     $this->reportUnhandledError($e, $message);
                 }
@@ -145,21 +146,26 @@ final class JsonRpcDispatcher
         }
 
         $responder ??= new RequestResponder($this->peer, $message->getId());
-        $handler = $this->requestHandlers[$method] ?? null;
-        if (null === $handler) {
+        $registeredHandler = $this->requestHandlers[$method] ?? null;
+        if (null === $registeredHandler) {
             $responder->reject(JsonRpcError::METHOD_NOT_FOUND, 'Method not found');
 
             return null;
         }
 
+        [$handler, $argumentCount] = $registeredHandler;
         $key = $this->requestKey($message->getId());
         $deferredCancellation = new DeferredCancellation();
         $this->activeRequests[$key][spl_object_id($deferredCancellation)] = $deferredCancellation;
 
-        return async(function () use ($handler, $message, $params, $responder, $key, $deferredCancellation): void {
+        return async(function () use ($handler, $argumentCount, $message, $params, $responder, $key, $deferredCancellation): void {
             try {
                 try {
-                    $result = $handler($params, $deferredCancellation->getCancellation(), $message);
+                    $result = $handler(...\array_slice([
+                        $params,
+                        $deferredCancellation->getCancellation(),
+                        $message,
+                    ], 0, $argumentCount));
                 } catch (JsonRpcException $e) {
                     try {
                         $responder->reject($e->getCode(), $e->getMessage(), $e->getData());
@@ -191,6 +197,76 @@ final class JsonRpcDispatcher
                 }
             }
         });
+    }
+
+    /**
+     * @param list<class-string> $contextTypes
+     *
+     * @return array{0: \Closure, 1: int}
+     */
+    private function prepareHandler(callable $handler, array $contextTypes): array
+    {
+        $handler = $handler instanceof \Closure ? $handler : \Closure::fromCallable($handler);
+        $parameters = new \ReflectionFunction($handler)->getParameters();
+        if (!$parameters) {
+            return [$handler, 0];
+        }
+
+        $argumentCount = 1;
+        $lastParameter = $parameters[array_key_last($parameters)];
+        foreach ($contextTypes as $index => $contextType) {
+            $parameterIndex = $index + 1;
+            $parameter = $parameters[$parameterIndex] ?? ($lastParameter->isVariadic() ? $lastParameter : null);
+            if (null === $parameter || !self::parameterAcceptsObject($parameter, $contextType)) {
+                break;
+            }
+
+            ++$argumentCount;
+        }
+
+        return [$handler, $argumentCount];
+    }
+
+    /** @param class-string $class */
+    private static function parameterAcceptsObject(\ReflectionParameter $parameter, string $class): bool
+    {
+        $type = $parameter->getType();
+        if (null === $type) {
+            return true;
+        }
+
+        return self::typeAcceptsObject($type, $class);
+    }
+
+    /** @param class-string $class */
+    private static function typeAcceptsObject(\ReflectionType $type, string $class): bool
+    {
+        if ($type instanceof \ReflectionUnionType) {
+            foreach ($type->getTypes() as $nestedType) {
+                if (self::typeAcceptsObject($nestedType, $class)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        if ($type instanceof \ReflectionIntersectionType) {
+            foreach ($type->getTypes() as $nestedType) {
+                if (!self::typeAcceptsObject($nestedType, $class)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        if (!$type instanceof \ReflectionNamedType) {
+            return false;
+        }
+        if ($type->isBuiltin()) {
+            return \in_array($type->getName(), ['mixed', 'object'], true);
+        }
+
+        return is_a($class, $type->getName(), true);
     }
 
     private function reportUnhandledError(\Throwable $error, JsonRpcMessage $message): void
