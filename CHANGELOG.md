@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-08-07
 
 - Add opt-in associative-array decoding for inbound JSON values
 - Reject handler parameter shape mismatches as invalid params
@@ -19,6 +19,10 @@
 - Reject object parameters that serialize to non-structured JSON values
 - Pass the inbound message as optional request and notification handler context
 - Stabilize inbound parameter types and handler callable arity
+- Mark low-level JSON-RPC construction and dispatch APIs as internal
+- Enforce configurable inbound and outbound line-delimited stream message limits
+- Tighten inbound JSON-RPC message and safe numeric ID validation
+- Declare Amp as a direct runtime dependency
 
 ## 0.5.0 - 2026-07-30
 
