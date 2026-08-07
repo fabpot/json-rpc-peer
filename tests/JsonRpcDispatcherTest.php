@@ -23,6 +23,7 @@ use Fabpot\JsonRpc\JsonRpcDispatcher;
 use Fabpot\JsonRpc\JsonRpcError;
 use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
+use Fabpot\JsonRpc\JsonRpcValueDecoding;
 use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use Fabpot\JsonRpc\TrafficLoggerInterface;
 use PHPUnit\Framework\TestCase;
@@ -42,6 +43,19 @@ final class JsonRpcDispatcherTest extends TestCase
         );
 
         $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => ['echoed' => 42]]], $output);
+    }
+
+    public function testAssociativeArrayDecodingSupportsArrayHandlers(): void
+    {
+        $output = $this->drive(
+            '{"jsonrpc":"2.0","id":1,"method":"echo","params":{"item":{"value":42}}}',
+            static function (JsonRpcDispatcher $dispatcher): void {
+                $dispatcher->onRequest('echo', static fn(array $params): array => ['echoed' => $params]);
+            },
+            JsonRpcValueDecoding::AssociativeArrays,
+        );
+
+        $this->assertSame([['jsonrpc' => '2.0', 'id' => 1, 'result' => ['echoed' => ['item' => ['value' => 42]]]]], $output);
     }
 
     public function testRequestParameterShapeMismatchBecomesInvalidParams(): void
@@ -765,10 +779,16 @@ final class JsonRpcDispatcherTest extends TestCase
      *
      * @return list<array<array-key, mixed>>
      */
-    private function drive(string $input, callable $configure): array
-    {
+    private function drive(
+        string $input,
+        callable $configure,
+        JsonRpcValueDecoding $valueDecoding = JsonRpcValueDecoding::PreserveShapes,
+    ): array {
         $output = new CapturingStream();
-        $peer = new JsonRpcPeer(new StreamJsonRpcTransport(new ReadableBuffer($input), $output));
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport(new ReadableBuffer($input), $output),
+            valueDecoding: $valueDecoding,
+        );
         $dispatcher = new JsonRpcDispatcher($peer);
         $configure($dispatcher);
         $peer->listen();

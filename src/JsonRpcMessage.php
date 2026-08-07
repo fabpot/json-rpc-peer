@@ -21,7 +21,7 @@ use Fabpot\JsonRpc\Exception\InvalidArgumentException;
 final class JsonRpcMessage
 {
     /**
-     * @param list<mixed>|\stdClass|null $params
+     * @param array<array-key, mixed>|\stdClass|null $params
      */
     private function __construct(
         private readonly int|float|string|null $id,
@@ -35,7 +35,7 @@ final class JsonRpcMessage
      *
      * @param array<string, mixed> $data
      */
-    public static function fromArray(array $data): self
+    public static function fromArray(array $data, JsonRpcValueDecoding $valueDecoding = JsonRpcValueDecoding::PreserveShapes): self
     {
         if ('2.0' !== ($data['jsonrpc'] ?? null)) {
             throw new InvalidArgumentException('The jsonrpc member must be "2.0".');
@@ -53,7 +53,7 @@ final class JsonRpcMessage
             if (JsonRpcValues::containsNonFiniteFloat($data['params'])) {
                 throw new InvalidArgumentException('The params member must contain only finite numbers.');
             }
-            $params = $data['params'];
+            $params = JsonRpcValues::decodeInbound($data['params'], $valueDecoding);
         }
 
         $hasId = \array_key_exists('id', $data);
@@ -62,6 +62,7 @@ final class JsonRpcMessage
             throw new InvalidArgumentException('The id member must be a safely representable finite number, string, or null.');
         }
         /** @var int|float|string|null $id */
+        /** @var array<array-key, mixed>|\stdClass|null $params */
 
         return new self($id, $hasId, $data['method'], $params);
     }
@@ -77,7 +78,7 @@ final class JsonRpcMessage
     }
 
     /**
-     * @return list<mixed>|\stdClass|null
+     * @return array<array-key, mixed>|\stdClass|null
      */
     public function getParams(): array|\stdClass|null
     {

@@ -171,6 +171,23 @@ its parameter type to the shape expected by its method. Requests with a differen
 parameter shape receive an `Invalid params` error, while mismatched notifications
 are ignored.
 
+Applications that represent decoded JSON objects as associative arrays can opt
+in once when creating the peer:
+
+```php
+use Fabpot\JsonRpc\JsonRpcValueDecoding;
+
+$peer = new JsonRpcPeer(
+    $transport,
+    valueDecoding: JsonRpcValueDecoding::AssociativeArrays,
+);
+```
+
+This recursively converts inbound parameter objects, response results, and
+remote error data to associative arrays. JSON arrays remain lists and omitted
+parameters remain `null`. The default `JsonRpcValueDecoding::PreserveShapes`
+mode keeps the shape-preserving behavior described above.
+
 Outbound methods accept `array|object|null` parameters. `null`, the default,
 omits `params`; use `[]` for an empty JSON array and `new \stdClass()` for an
 empty JSON object:

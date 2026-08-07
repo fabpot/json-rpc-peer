@@ -35,6 +35,7 @@ use PHPUnit\Framework\TestCase;
 use Fabpot\JsonRpc\JsonRpcMessage;
 use Fabpot\JsonRpc\JsonRpcPeer;
 use Fabpot\JsonRpc\JsonRpcTransportInterface;
+use Fabpot\JsonRpc\JsonRpcValueDecoding;
 use Fabpot\JsonRpc\RequestResponder;
 use Fabpot\JsonRpc\StreamJsonRpcTransport;
 use Fabpot\JsonRpc\TrafficLoggerInterface;
@@ -96,6 +97,40 @@ final class JsonRpcPeerTest extends TestCase
         $this->assertIsArray($params['nested']->items);
         $this->assertInstanceOf(\stdClass::class, $params['nested']->items[0]);
         $this->assertSame('one', $params['nested']->items[0]->name);
+    }
+
+    public function testDecodesInboundValuesAsAssociativeArrays(): void
+    {
+        $input = new ReadableBuffer(
+            '{"jsonrpc":"2.0","method":"omitted"}' . "\n"
+            . '{"jsonrpc":"2.0","method":"array","params":[{"name":"one"}]}' . "\n"
+            . '{"jsonrpc":"2.0","method":"object","params":{"items":[{"name":"one"}]}}' . "\n"
+            . '{"jsonrpc":"2.0","id":1,"result":{"items":[{"name":"one"}]}}' . "\n"
+            . '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Failed","data":{"field":{"name":"one"}}}}'
+        );
+        $peer = new JsonRpcPeer(
+            new StreamJsonRpcTransport($input, new CapturingStream()),
+            valueDecoding: JsonRpcValueDecoding::AssociativeArrays,
+        );
+        $params = [];
+        $peer->onMessage(static function (JsonRpcMessage $message) use (&$params): void {
+            $params[$message->getMethod()] = $message->getParams();
+        });
+        $result = $peer->request('result');
+        $error = $peer->request('error');
+
+        $peer->listen();
+
+        $this->assertNull($params['omitted']);
+        $this->assertSame([['name' => 'one']], $params['array']);
+        $this->assertSame(['items' => [['name' => 'one']]], $params['object']);
+        $this->assertSame(['items' => [['name' => 'one']]], $result->await());
+        try {
+            $error->await();
+            $this->fail('The remote error was not raised.');
+        } catch (JsonRpcException $e) {
+            $this->assertSame(['field' => ['name' => 'one']], $e->getData());
+        }
     }
 
     public function testPreservesOutboundParameterShapes(): void

@@ -63,6 +63,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         private readonly ?TrafficLoggerInterface $trafficLogger = null,
         private readonly int $maximumConcurrentInboundRequests = 64,
         private readonly int $maximumBatchEntries = 128,
+        private readonly JsonRpcValueDecoding $valueDecoding = JsonRpcValueDecoding::PreserveShapes,
     ) {
         if ($maximumConcurrentInboundRequests < 1) {
             throw new InvalidArgumentException('The maximum number of concurrent inbound requests must be a positive integer.');
@@ -516,7 +517,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
     private function handleRequest(array $entry, ResponseSenderInterface $sender): void
     {
         try {
-            $message = JsonRpcMessage::fromArray($entry);
+            $message = JsonRpcMessage::fromArray($entry, $this->valueDecoding);
         } catch (InvalidArgumentException) {
             if ($sender instanceof BatchResponseSender) {
                 $sender->addInvalidRequest($this->validResponseId($entry['id'] ?? null));
@@ -660,7 +661,7 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
             }
 
             if ($this->detachPendingRequest($key, $pendingRequest)) {
-                $pendingRequest->complete($data['result']);
+                $pendingRequest->complete(JsonRpcValues::decodeInbound($data['result'], $this->valueDecoding));
             }
 
             return;
@@ -681,7 +682,11 @@ final class JsonRpcPeer implements Closable, ResponseSenderInterface
         }
 
         if ($this->detachPendingRequest($key, $pendingRequest)) {
-            $pendingRequest->error(new JsonRpcException($error['code'], $error['message'], $error['data'] ?? null));
+            $pendingRequest->error(new JsonRpcException(
+                $error['code'],
+                $error['message'],
+                JsonRpcValues::decodeInbound($error['data'] ?? null, $this->valueDecoding),
+            ));
         }
     }
 

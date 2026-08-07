@@ -73,6 +73,25 @@ final class JsonRpcValues
         return $params;
     }
 
+    public static function decodeInbound(mixed $value, JsonRpcValueDecoding $decoding): mixed
+    {
+        if (JsonRpcValueDecoding::PreserveShapes === $decoding) {
+            return $value;
+        }
+        if ($value instanceof \stdClass) {
+            $value = get_object_vars($value);
+        }
+        if (!\is_array($value)) {
+            return $value;
+        }
+
+        foreach ($value as $key => $item) {
+            $value[$key] = self::decodeInbound($item, $decoding);
+        }
+
+        return $value;
+    }
+
     public static function containsNonFiniteFloat(mixed $value): bool
     {
         if (\is_float($value)) {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add opt-in associative-array decoding for inbound JSON values
 - Reject handler parameter shape mismatches as invalid params
 - Report peers as closed as soon as shutdown starts
 - Make peer shutdown deterministic and reject outbound work after shutdown begins
