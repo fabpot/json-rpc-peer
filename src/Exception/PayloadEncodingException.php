@@ -11,5 +11,9 @@
 
 namespace Fabpot\JsonRpc\Exception;
 
-/** @internal */
+/**
+ * Thrown when an outbound JSON-RPC payload cannot be encoded to JSON.
+ *
+ * @author Fabien Potencier <fabien@symfony.com>
+ */
 final class PayloadEncodingException extends InvalidArgumentException {}
