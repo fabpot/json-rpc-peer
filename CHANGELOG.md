@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0 - 2026-08-18
+
+- Make `PayloadEncodingException` part of the public API
+
 ## 0.6.0 - 2026-08-07
 
 - Add opt-in associative-array decoding for inbound JSON values
